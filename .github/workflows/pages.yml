@@ -33,6 +33,12 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      - name: Install mdBook
+        run: cargo install mdbook --locked --version 0.5.2
+
+      - name: Build docs
+        run: mdbook build docs
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
