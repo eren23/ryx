@@ -18,6 +18,9 @@ import (
 
 // Build lowers an HIR program to MIR in SSA form.
 func Build(prog *hir.Program) *Program {
+	// Compile match expressions into decision trees before MIR lowering.
+	hir.CompileMatches(prog)
+
 	p := &Program{}
 
 	// Copy struct/enum definitions.
@@ -36,11 +39,14 @@ func Build(prog *hir.Program) *Program {
 		p.Enums = append(p.Enums, ed)
 	}
 
-	// Lower each function.
+	// Lower each function, collecting lambda functions along the way.
+	var lambdaFns []*Function
 	for _, fn := range prog.Functions {
-		mfn := buildFunction(fn, prog)
+		mfn := buildFunction(fn, prog, &lambdaFns)
 		p.Functions = append(p.Functions, mfn)
 	}
+	// Append lambda functions after all top-level functions.
+	p.Functions = append(p.Functions, lambdaFns...)
 
 	return p
 }
@@ -67,6 +73,9 @@ type builder struct {
 
 	// lambdaCounter for generating unique lambda function names.
 	lambdaCounter int
+
+	// lambdaFns collects MIR functions created for lambda bodies.
+	lambdaFns *[]*Function
 }
 
 type incompletePhi struct {
@@ -80,7 +89,7 @@ type loopContext struct {
 	exitVal LocalID // local to store break value (NoLocal if none)
 }
 
-func buildFunction(hirFn *hir.Function, prog *hir.Program) *Function {
+func buildFunction(hirFn *hir.Function, prog *hir.Program, lambdaFns *[]*Function) *Function {
 	fn := &Function{
 		Name:       hirFn.Name,
 		ReturnType: hirFn.ReturnType,
@@ -90,6 +99,7 @@ func buildFunction(hirFn *hir.Function, prog *hir.Program) *Function {
 	b := &builder{
 		fn:             fn,
 		prog:           prog,
+		lambdaFns:      lambdaFns,
 		currentDef:     make(map[string]map[BlockID]LocalID),
 		sealed:         make(map[BlockID]bool),
 		incompletePhis: make(map[BlockID][]incompletePhi),
@@ -257,11 +267,11 @@ func (b *builder) varType(name string) types.Type {
 // user-defined in the HIR program or a known built-in) that should be
 // emitted as a Global reference rather than an SSA local lookup.
 func (b *builder) isGlobal(name string) bool {
-	// Not global if the variable is defined in the current SSA scope.
-	if defs, ok := b.currentDef[name]; ok {
-		if _, exists := defs[b.curBlock]; exists {
-			return false
-		}
+	// Not global if the variable is defined in any SSA block (e.g. a
+	// function parameter defined in the entry block must shadow a
+	// builtin of the same name in all subsequent blocks).
+	if defs, ok := b.currentDef[name]; ok && len(defs) > 0 {
+		return false
 	}
 	// Check user-defined functions in the HIR program.
 	for _, fn := range b.prog.Functions {
@@ -851,6 +861,10 @@ func (b *builder) lowerLambda(e *hir.Lambda) Value {
 	lambdaName := fmt.Sprintf("%s$lambda%d", b.fn.Name, b.lambdaCounter)
 	b.lambdaCounter++
 
+	// Build a MIR function for the lambda body.
+	lambdaFn := b.buildLambdaFunction(lambdaName, e)
+	*b.lambdaFns = append(*b.lambdaFns, lambdaFn)
+
 	captures := make([]Value, len(e.Captures))
 	for i, cap := range e.Captures {
 		captures[i] = b.readVariable(cap.Name, b.curBlock)
@@ -864,6 +878,77 @@ func (b *builder) lowerLambda(e *hir.Lambda) Value {
 		Type:     e.ExprType(),
 	})
 	return b.fn.LocalRef(dest)
+}
+
+// buildLambdaFunction creates a MIR function from a lambda's body.
+// Captured variables are accessed via Upvalue references; lambda params
+// become regular function parameters.
+func (b *builder) buildLambdaFunction(name string, lambda *hir.Lambda) *Function {
+	// Determine return type from the lambda's function type.
+	var retType types.Type = types.TypUnit
+	if ft, ok := lambda.ExprType().(*types.FnType); ok {
+		retType = ft.Return
+	}
+
+	fn := &Function{
+		Name:         name,
+		ReturnType:   retType,
+		Entry:        0,
+		UpvalueCount: len(lambda.Captures),
+	}
+
+	lb := &builder{
+		fn:             fn,
+		prog:           b.prog,
+		lambdaFns:      b.lambdaFns, // support nested lambdas
+		currentDef:     make(map[string]map[BlockID]LocalID),
+		sealed:         make(map[BlockID]bool),
+		incompletePhis: make(map[BlockID][]incompletePhi),
+	}
+
+	entry := fn.NewBlock("entry")
+	lb.curBlock = entry
+	lb.sealBlock(entry)
+
+	// Load captured variables from upvalues into locals.
+	for i, cap := range lambda.Captures {
+		local := fn.NewLocal(cap.Name, cap.Type)
+		lb.emit(&Assign{
+			Dest: local,
+			Src:  &Upvalue{Index: i, Type: cap.Type},
+			Type: cap.Type,
+		})
+		lb.writeVariable(cap.Name, entry, local)
+	}
+
+	// Create locals for lambda parameters.
+	for _, p := range lambda.Params {
+		local := fn.NewLocal(p.Name, p.Type)
+		fn.Params = append(fn.Params, local)
+		lb.writeVariable(p.Name, entry, local)
+	}
+
+	// Lower the lambda body.
+	val := lb.lowerExpr(lambda.Body)
+
+	// Add return terminator.
+	cur := fn.Block(lb.curBlock)
+	if cur.Term == nil {
+		if val != nil {
+			cur.Term = &Return{Value: val}
+		} else {
+			cur.Term = &Return{Value: UnitConst()}
+		}
+	}
+
+	// Ensure all blocks have terminators.
+	for _, blk := range fn.Blocks {
+		if blk.Term == nil {
+			blk.Term = &Unreachable{}
+		}
+	}
+
+	return fn
 }
 
 type armResult struct {
@@ -930,11 +1015,14 @@ func (b *builder) lowerDecision(
 		*results = append(*results, armResult{val: bodyVal, block: exitBlock})
 
 	case *hir.DecisionSwitch:
-		// [CLAUDE-FIX] Emit discriminant-based dispatch for match expressions.
-		// For each case, test the scrutinee's variant tag and branch accordingly.
+		// Lower the HIR scrutinee for this switch level. For nested switches
+		// (e.g., checking a destructured field), this differs from the parent
+		// scrutinee MIR value.
+		switchVal := b.lowerExpr(d.Scrutinee)
+
 		enumName := ""
-		if scrutinee.ValueType() != nil {
-			if et, ok := scrutinee.ValueType().(*types.EnumType); ok {
+		if switchVal.ValueType() != nil {
+			if et, ok := switchVal.ValueType().(*types.EnumType); ok {
 				enumName = et.Name
 			}
 		}
@@ -949,7 +1037,7 @@ func (b *builder) lowerDecision(
 				tagResult := b.fn.NewLocal("tag.eq", types.TypBool)
 				b.emit(&TagCheckStmt{
 					Dest:     tagResult,
-					Object:   scrutinee,
+					Object:   switchVal,
 					EnumName: enumName,
 					Variant:  c.Constructor,
 					Type:     types.TypBool,
@@ -968,9 +1056,9 @@ func (b *builder) lowerDecision(
 			b.sealBlock(caseBlock)
 			b.curBlock = caseBlock
 
-			// [CLAUDE-FIX] Field bindings are handled by DecisionLeaf via
-			// the match compiler's FieldAccess nodes, so we skip explicit
-			// binding here and just lower the case body decision tree.
+			// Field bindings are handled by DecisionLeaf via the match
+			// compiler's FieldAccess nodes. Pass the original scrutinee
+			// for phi/result tracking but the switch dispatches on switchVal.
 			b.lowerDecision(c.Body, scrutinee, resultType, mergeBlock, results)
 
 			// Continue from the "next" block for the next case check.

@@ -6,7 +6,7 @@
   "pre_run_head": "6b91ff3f2e831caa560f7e4e8857aa524d73ec65",
   "base_ref": "main",
   "base_commit": "6b91ff3f2e831caa560f7e4e8857aa524d73ec65",
-  "result_ref": "",
-  "result_commit": "",
+  "result_ref": "attoswarm/09202efb",
+  "result_commit": "1e445695d3f63bb35ef9fc41f41a60f97684fb4c",
   "finalization_mode": ""
 }

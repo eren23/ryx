@@ -1,27 +1,5 @@
-# Task: Array stdlib expansion
+# Task: Fix hash_map and json_parser value computation returning zeros
 
-Add 12 new array functions to pkg/stdlib/array_ops.go.
+E2E tests hash_map.ryx and json_parser.ryx produce all zeros instead of expected computed values. The programs compile and run without crashing but produce wrong results. This likely indicates that struct field access (FIELD_GET/FIELD_SET) or enum variant destructuring is not working correctly, returning default zero values instead of actual stored values. Alternatively, variable mutation (let mut + reassignment) may not be working properly in the VM. Read both .ryx test files to understand what operations they perform, then trace the issue - possibly in how STORE_LOCAL/LOAD_LOCAL handles mutable variables, or how struct/enum field access works in the VM dispatch loop.
 
-Functions using CallbackInvoker (higher-order):
-- ArrayFind: 2 args (array, predicate), returns makeResultOk(first match) or makeResultErr("not found")
-- ArrayAny: 2 args, returns BoolVal(true) on first truthy predicate result, false for empty
-- ArrayAll: 2 args, returns BoolVal(false) on first non-truthy, true for empty
-
-Numeric aggregation (1-arg, check all elements are Int or Float):
-- ArraySum: returns Int if all Int, Float if any Float, IntVal(0) for empty
-- ArrayMin: returns minimum via compareValues, errors on empty
-- ArrayMax: returns maximum via compareValues, errors on empty
-
-Slicing/chunking:
-- ArrayTake: 2 args (array, n:Int), returns first min(n, len) elements, empty for n<=0
-- ArrayDrop: 2 args, removes first n elements
-- ArraySlice: 3 args (array, start:Int, end:Int), supports negative indices, clamps to bounds
-- ArrayChunk: 2 args (array, size:Int), errors if size<=0, returns array of arrays
-
-Other:
-- ArrayUnique: 1 arg, O(n²) dedup using Value.Equal, preserves first occurrence order
-- ArrayJoin: 2 args (array of strings, separator string), uses resolveString on each element, returns joined string
-
-See goal spec section 6 for exact implementations.
-
-Target files: pkg/stdlib/array_ops.go
+Target files: pkg/vm/vm.go, pkg/vm/value.go, pkg/vm/heap.go

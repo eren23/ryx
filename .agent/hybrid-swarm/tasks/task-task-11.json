@@ -1,17 +1,14 @@
 {
   "task_id": "task-11",
-  "title": "Map stdlib unit tests",
-  "description": "Create pkg/stdlib/map_ops_test.go with comprehensive unit tests for all 12 map functions.\n\nTest cases (see goal spec section 9.1):\n- TestMapNewAndLen: create empty map, verify len=0\n- TestMapSetAndGet: set string key to int value, get it back, verify len=1\n- TestMapContainsAndDelete: verify contains returns false, set key, verify true, delete, verify false\n- TestMapGetMissing: verify error contains \"key not found\"\n- TestMapIntKeys: use IntVal keys, verify get works\n- TestMapOverwrite: set same key twice, verify value updates and len stays 1\n- TestMapKeysAndValues: set 2 entries, verify keys/values arrays have length 2\n- TestMapMerge: merge two maps with overlapping key, verify m2 wins\n- TestMapEntries: verify returns array of tuples with correct key/value pairs\n- TestMapDeleteNonexistent: verify silent success\n- TestMapMixedKeyTypes: use Int and String keys in same map\n\nUse vm.NewHeap() for each test. Use t.Fatalf for assertion failures. Import testing, strings, github.com/ryx-lang/ryx/pkg/vm.",
+  "title": "Final full test suite validation",
+  "description": "Run the complete test suite one final time to confirm all tests pass: go test ./... . Verify all 24 E2E programs pass, all unit tests pass across all packages (lexer, parser, resolver, types, hir, mir, optimize, codegen, vm, gc, stdlib, diagnostic, repl), and integration concurrency tests pass. Report final pass/fail counts. If everything passes, the task is complete.",
   "status": "pending",
-  "task_kind": "test",
-  "role_hint": "impl-claude",
+  "task_kind": "judge",
+  "role_hint": "judge",
   "deps": [
-    "task-4",
     "task-10"
   ],
-  "target_files": [
-    "pkg/stdlib/map_ops_test.go"
-  ],
+  "target_files": [],
   "read_files": [],
   "files_modified": [],
   "result_summary": "",

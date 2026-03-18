@@ -1,1 +1,1 @@
-Running tmp`.
+Both `game_of_life` and `graph_bfs` pass. The other failures

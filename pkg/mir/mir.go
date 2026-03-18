@@ -97,6 +97,16 @@ func (*Global) mirValueTag()            {}
 func (v *Global) ValueType() types.Type { return v.Type }
 func (v *Global) String() string        { return fmt.Sprintf("@%s", v.Name) }
 
+// Upvalue references a captured variable in a closure function.
+type Upvalue struct {
+	Index int
+	Type  types.Type
+}
+
+func (*Upvalue) mirValueTag()            {}
+func (v *Upvalue) ValueType() types.Type { return v.Type }
+func (v *Upvalue) String() string        { return fmt.Sprintf("upval(%d)", v.Index) }
+
 // ---------------------------------------------------------------------------
 // Convenience constructors
 // ---------------------------------------------------------------------------
@@ -469,12 +479,13 @@ type LocalDef struct {
 
 // Function is a MIR function in SSA form with a control-flow graph.
 type Function struct {
-	Name       string
-	Params     []LocalID
-	ReturnType types.Type
-	Locals     []*LocalDef
-	Blocks     []*BasicBlock
-	Entry      BlockID
+	Name         string
+	Params       []LocalID
+	ReturnType   types.Type
+	Locals       []*LocalDef
+	Blocks       []*BasicBlock
+	Entry        BlockID
+	UpvalueCount int // number of upvalues (captured variables) for closure functions
 }
 
 // Block returns the basic block with the given ID.

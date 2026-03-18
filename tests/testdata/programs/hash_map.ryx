@@ -25,16 +25,16 @@ fn main() {
     vals[idx0] = 50;
     used[idx0] = true;
 
-    // Insert key=21, value=210
-    let idx1 = hash(21, size);
-    keys[idx1] = 21;
-    vals[idx1] = 210;
+    // Insert key=22, value=220
+    let idx1 = hash(22, size);
+    keys[idx1] = 22;
+    vals[idx1] = 220;
     used[idx1] = true;
 
-    // Insert key=37, value=370
-    let idx2 = hash(37, size);
-    keys[idx2] = 37;
-    vals[idx2] = 370;
+    // Insert key=39, value=390
+    let idx2 = hash(39, size);
+    keys[idx2] = 39;
+    vals[idx2] = 390;
     used[idx2] = true;
 
     // Lookup key=5
@@ -45,17 +45,17 @@ fn main() {
         println(0);
     };
 
-    // Lookup key=21
-    let l1 = hash(21, size);
-    if used[l1] && keys[l1] == 21 {
+    // Lookup key=22
+    let l1 = hash(22, size);
+    if used[l1] && keys[l1] == 22 {
         println(vals[l1]);
     } else {
         println(0);
     };
 
-    // Lookup key=37
-    let l2 = hash(37, size);
-    if used[l2] && keys[l2] == 37 {
+    // Lookup key=39
+    let l2 = hash(39, size);
+    if used[l2] && keys[l2] == 39 {
         println(vals[l2]);
     } else {
         println(0);

@@ -179,6 +179,10 @@ func removeDeadStmts(fn *mir.Function) {
 			markValue(s.Src)
 		case *mir.TagCheckStmt: // [CLAUDE-FIX]
 			markValue(s.Object)
+		case *mir.IndexSetStmt:
+			markValue(s.Object)
+			markValue(s.Index)
+			markValue(s.Value)
 		}
 	}
 

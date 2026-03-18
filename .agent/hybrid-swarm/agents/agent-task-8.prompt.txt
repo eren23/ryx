@@ -1,21 +1,5 @@
-# Task: String stdlib expansion
+# Task: Fix brainfuck interpreter unknown tag output
 
-Add 6 new string functions to pkg/stdlib/string_ops.go.
+The brainfuck_interp.ryx E2E test outputs '<unknown tag=0>' instead of expected integer values '3' and '5'. This means the VM is printing values with an unrecognized ValueTag. The issue is likely that some operation (possibly array element access, char-to-int conversion, or arithmetic on values extracted from arrays) produces a Value with tag=0 which isn't handled by the display/print logic. Check how the brainfuck interpreter uses arrays (as the tape) and integer operations, then trace why the resulting values have tag 0. Fix either the VM operations that produce these malformed values or ensure tag 0 maps to a proper type.
 
-1. StringIndexOf: 2 args (haystack, needle), returns codepoint index (not byte index) using strings.Index then utf8.RuneCountInString for conversion. Returns -1 if not found.
-
-2. StringRepeat: 2 args (string, n:Int), uses strings.Repeat, errors if n < 0.
-
-3. StringPadLeft: 3 args (string, width:Int, pad_char:Char), pads left with pad_char to reach width codepoints. Returns original if already >= width.
-
-4. StringPadRight: 3 args, same as PadLeft but pads on right.
-
-5. StringBytes: 1 arg (string), returns array of IntVal byte values from UTF-8 encoding.
-
-6. StringJoin: 2 args, delegates to ArrayJoin (same package, same signature).
-
-Imports needed: add "unicode/utf8" if not already imported (it is). May need "strings" (already imported).
-
-See goal spec section 7 for exact implementations and edge cases.
-
-Target files: pkg/stdlib/string_ops.go
+Target files: pkg/vm/vm.go, pkg/vm/value.go

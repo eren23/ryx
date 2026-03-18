@@ -345,6 +345,11 @@ func (c *Checker) registerImpls(program *parser.Program) {
 		methods := make(map[string]*FnType, len(impl.Methods))
 		for _, m := range impl.Methods {
 			ft := c.fnDefToType(m)
+			// Strip 'self' parameter so stored method types are consistent
+			// with trait definitions (which exclude self from ParamTypes).
+			if len(m.Params) > 0 && m.Params[0].Name == "self" {
+				ft = &FnType{Params: ft.Params[1:], Return: ft.Return}
+			}
 			methods[m.Name] = ft
 		}
 
@@ -455,12 +460,8 @@ func (c *Checker) checkImplMethod(fn *parser.FnDef, selfType Type) {
 		if p.Name == "self" {
 			continue
 		}
-		idx := i
-		if len(fn.Params) > 0 && fn.Params[0].Name == "self" {
-			idx = i - 1
-		}
-		if idx >= 0 && idx < len(fnType.Params) {
-			c.defineVar(p.Name, MonoScheme(fnType.Params[idx]))
+		if i < len(fnType.Params) {
+			c.defineVar(p.Name, MonoScheme(fnType.Params[i]))
 		}
 	}
 

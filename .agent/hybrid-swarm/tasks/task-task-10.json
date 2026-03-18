@@ -1,20 +1,19 @@
 {
   "task_id": "task-10",
-  "title": "Conversion functions and RegisterAll updates",
-  "description": "Update pkg/stdlib/core.go with:\n\n1. Add 3 new conversion functions IN core.go:\n   - BoolToString: 1 Bool arg, returns heap-allocated \"true\" or \"false\" string\n   - CharToInt: 1 Char arg, returns IntVal(int64(args[0].AsChar()))\n   - IntToChar: 1 Int arg, validates range [0, 0x10FFFF] and utf8.ValidRune, returns CharVal\n\n2. Add import \"unicode/utf8\" to core.go\n\n3. Update RegisterAll() function to add ALL new registrations:\n\n   Map operations:\n   r.Register(\"map_new\", MapNew) through r.Register(\"map_map\", MapMapValues) \u2014 12 functions\n\n   Math:\n   r.Register(\"sin\", Sin) through r.Register(\"clamp\", Clamp) \u2014 16 functions\n\n   Time/Random:\n   r.Register(\"time_now_ms\", TimeNowMs) through r.Register(\"random_choice\", RandomChoice) \u2014 5 functions\n\n   Conversions:\n   r.Register(\"bool_to_string\", BoolToString), r.Register(\"char_to_int\", CharToInt), r.Register(\"int_to_char\", IntToChar)\n\n   Array:\n   r.Register(\"array_find\", ArrayFind) through r.Register(\"array_slice\", ArraySlice) \u2014 12 functions\n\n   String:\n   r.Register(\"string_index_of\", StringIndexOf) through r.Register(\"string_join\", StringJoin) \u2014 6 functions\n\n   Filesystem:\n   r.Register(\"file_exists\", FileExists) through r.Register(\"file_size\", FileSize) \u2014 8 functions\n\nSee goal spec sections 3-8 Registration subsections for exact names.",
+  "title": "Fix any remaining E2E test failures from integration verification",
+  "description": "Based on the results of task-9 (integration verification), fix any remaining E2E test failures. This is a catch-all task for issues that were not fully resolved by the targeted fix tasks (1-8) or that were revealed as secondary issues once primary bugs were fixed. Apply targeted fixes based on the specific error messages and failure modes identified in task-9.",
   "status": "pending",
-  "task_kind": "integrate",
-  "role_hint": "impl-claude",
+  "task_kind": "implement",
+  "role_hint": "impl",
   "deps": [
-    "task-4",
-    "task-5",
-    "task-6",
-    "task-7",
-    "task-8",
     "task-9"
   ],
   "target_files": [
-    "pkg/stdlib/core.go"
+    "pkg/vm/vm.go",
+    "pkg/codegen/codegen.go",
+    "pkg/hir/lower.go",
+    "pkg/hir/match_compile.go",
+    "pkg/types/checker.go"
   ],
   "read_files": [],
   "files_modified": [],

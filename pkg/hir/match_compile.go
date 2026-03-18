@@ -177,19 +177,38 @@ func compileArms(scrutinee Expr, arms []*MatchArm) Decision {
 }
 
 // groupVariantArms collects consecutive VariantPat arms from the front.
+// It stops when it encounters a duplicate constructor or a variant with
+// nested non-trivial patterns (which require individual compilation).
 func groupVariantArms(arms []*MatchArm) ([]*MatchArm, []*MatchArm) {
 	var group []*MatchArm
-	for _, arm := range arms {
-		if _, ok := arm.Pattern.(*VariantPat); ok {
-			group = append(group, arm)
-		} else {
+	seen := make(map[string]bool)
+	for i, arm := range arms {
+		vp, ok := arm.Pattern.(*VariantPat)
+		if !ok {
 			break
 		}
+		if seen[vp.Name] || hasNestedPatterns(vp) {
+			return group, arms[i:]
+		}
+		seen[vp.Name] = true
+		group = append(group, arm)
 	}
 	if len(group) < 1 {
 		return nil, arms
 	}
 	return group, arms[len(group):]
+}
+
+// hasNestedPatterns returns true if a VariantPat has non-trivial (nested
+// variant) patterns in any of its field positions.
+func hasNestedPatterns(vp *VariantPat) bool {
+	for _, fp := range vp.Fields {
+		switch fp.(type) {
+		case *VariantPat:
+			return true
+		}
+	}
+	return false
 }
 
 // groupLiteralArms collects consecutive LiteralPat arms (without guards) from the front.
@@ -246,8 +265,15 @@ func compileVariantGroup(scrutinee Expr, variantArms []*MatchArm, defaultArms []
 }
 
 // compileVariantCase compiles a single variant pattern into a decision (leaf or guarded).
+// Handles nested VariantPat patterns in field positions by wrapping the leaf
+// in nested DecisionSwitch checks.
 func compileVariantCase(scrutinee Expr, pat *VariantPat, guard Expr, body Expr) Decision {
 	var bindings []Binding
+	type nestedCheck struct {
+		fieldAccess Expr
+		pat         *VariantPat
+	}
+	var nested []nestedCheck
 
 	for i, fieldPat := range pat.Fields {
 		fieldAccess := &FieldAccess{
@@ -266,18 +292,63 @@ func compileVariantCase(scrutinee Expr, pat *VariantPat, guard Expr, body Expr) 
 				Expr: fieldAccess,
 				Type: fieldAccess.ExprType(),
 			})
+		case *VariantPat:
+			nested = append(nested, nestedCheck{fieldAccess: fieldAccess, pat: fp})
+			// Collect bindings from the nested variant's fields.
+			collectNestedBindings(fieldAccess, fp, &bindings)
 		}
 	}
 
 	leaf := &DecisionLeaf{Bindings: bindings, Body: body}
+	var result Decision
 	if guard != nil {
-		return &DecisionGuard{
+		result = &DecisionGuard{
 			Condition: guard,
 			Then:      leaf,
 			Else:      &DecisionFail{},
 		}
+	} else {
+		result = leaf
 	}
-	return leaf
+
+	// Wrap with nested variant checks (innermost first).
+	for i := len(nested) - 1; i >= 0; i-- {
+		nc := nested[i]
+		result = &DecisionSwitch{
+			Scrutinee: nc.fieldAccess,
+			Cases: []*DecisionCase{{
+				Constructor: nc.pat.Name,
+				Body:        result,
+			}},
+			Default: &DecisionFail{},
+		}
+	}
+
+	return result
+}
+
+// collectNestedBindings recursively collects bindings from a nested VariantPat.
+func collectNestedBindings(parentField Expr, pat *VariantPat, bindings *[]Binding) {
+	for i, fp := range pat.Fields {
+		fieldAccess := &FieldAccess{
+			exprBase: exprBase{
+				Typ:  fieldTypeFromScrutinee(parentField, pat.Name, i),
+				Span: parentField.ExprSpan(),
+			},
+			Object: parentField,
+			Field:  variantFieldName(i),
+		}
+		switch f := fp.(type) {
+		case *BindingPat:
+			*bindings = append(*bindings, Binding{
+				Name: f.Name,
+				Expr: fieldAccess,
+				Type: fieldAccess.ExprType(),
+			})
+		case *VariantPat:
+			collectNestedBindings(fieldAccess, f, bindings)
+		}
+	}
 }
 
 // compileLiteralGroup creates a single DecisionSwitch with one case per literal.

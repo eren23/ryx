@@ -1,17 +1,26 @@
 {
   "task_id": "task-9",
-  "title": "Filesystem stdlib expansion",
-  "description": "Add 8 filesystem functions to pkg/stdlib/io.go.\n\n1. FileExists: 1 arg (path string), returns BoolVal(os.Stat(path) == nil)\n2. DirList: 1 arg, returns Result<[String], String> using os.ReadDir, returns entry names only\n3. DirCreate: 1 arg, returns Result<Unit, String> using os.MkdirAll(path, 0755)\n4. PathJoin: 1 arg (array of strings), uses filepath.Join\n5. PathDirname: 1 arg, uses filepath.Dir\n6. PathBasename: 1 arg, uses filepath.Base\n7. PathExtension: 1 arg, uses filepath.Ext\n8. FileSize: 1 arg, returns Result<Int, String> using os.Stat(path).Size()\n\nNew imports needed: \"path/filepath\"\n\nUse existing resolveString and resolveArray helpers (same package). Use existing makeResultOk/makeResultErr helpers.\n\nSee goal spec section 8 for exact implementations.",
-  "status": "done",
-  "task_kind": "implement",
-  "role_hint": "impl-codex",
-  "deps": [],
+  "title": "Integration test verification after bug fixes",
+  "description": "After tasks 1-8 are complete, run the full test suite (go test ./...) to verify: (1) all unit tests still pass, (2) all 24 E2E programs produce correct output matching their .expected files, (3) concurrency tests pass, (4) no Go-level panics occur. If any tests still fail, document the remaining failures with root cause analysis. Run: go test ./pkg/... && go test ./tests/integration/ -v -count=1. Report the pass/fail count for E2E programs.",
+  "status": "pending",
+  "task_kind": "judge",
+  "role_hint": "judge",
+  "deps": [
+    "task-1",
+    "task-2",
+    "task-3",
+    "task-4",
+    "task-5",
+    "task-6",
+    "task-7",
+    "task-8"
+  ],
   "target_files": [
-    "pkg/stdlib/io.go"
+    "tests/integration/e2e_test.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026e-fdcc-7e10-9197-05f4a01082a5\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m updating the filesystem stdlib in `pkg/stdlib/io.go` and first checking the current function registration pattern plus the existing `resolveString`, `resolveArray`, and result helpers so the new functions match the file\u2019s conventions.\"}}\n{\"type\":\"item.started\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/io.go\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/io.go\\\"\",\"aggregated_output\":\"package stdlib\\n\\nimport (\\n\\t\\\"fmt\\\"\\n\\t\\\"os\\\"\\n\\n\\t\\\"github.com/ryx-lang/ryx/pkg/vm\\\"\\n)\\n\\n// ---------------------------------------------------------------------------\\n// File I/O \u2014 read_file and write_file operate on the real filesystem.\\n// Results are returned as Result enums (Ok/Err).\\n// ---------------------------------------------------------------------------\\n\\n// ReadFile reads the entire contents of a file at the given path.\\n// Returns Result<String, String>.\\nfunc ReadFile(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"read_file: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\tpath, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"read_file: %w\\\", err)\\n\\t}\\n\\tdata, readErr := os.ReadFile(path)\\n\\tif readErr != nil {\\n\\t\\treturn makeResultErr(readErr.Error(), heap), nil\\n\\t}\\n\\tstrIdx := heap.AllocString(string(data))\\n\\treturn makeResultOk(vm.ObjVal(strIdx), heap), nil\\n}\\n\\n// WriteFile writes content to a file at the given path, creating it if necessary.\\n// Returns Result<Unit, String>.\\nfunc WriteFile(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"write_file: expected 2 arguments (path, content), got %d\\\", len(args))\\n\\t}\\n\\tpath, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"write_file: path: %w\\\", err)\\n\\t}\\n\\tcontent, err := resolveString(args[1], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"write_file: content: %w\\\", err)\\n\\t}\\n\\twriteErr := os.WriteFile(path, []byte(content), 0644)\\n\\tif writeErr != nil {\\n\\t\\treturn makeResultErr(writeErr.Error(), heap), nil\\n\\t}\\n\\treturn makeResultOk(vm.UnitVal(), heap), nil\\n}\\n\",\"exit_code\":0,\"status\":\"completed\"}}\n{\"type\":\"item.started\",\"item\":{\"id\":\"item_2\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'rg -n \\\"func resolveString|func resolveArray|makeResultOk|makeResultErr\\\" pkg -S'\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'rg -n \\\"func resolveString|func resolveArray|makeResultOk|makeResultErr\\\" pkg -S'\",\"aggregated_output\":\"pkg/stdlib/io.go:27:\\t\\treturn makeResultErr(readErr.Error(), heap), nil\\npkg/stdlib/io.go:30:\\treturn makeResultOk(vm.ObjVal(strIdx), heap), nil\\npkg/stdlib/io.go:49:\\t\\treturn makeResultErr(writeErr.Error(), heap), nil\\npkg/stdlib/io.go:51:\\treturn makeResultOk(vm.UnitVal(), heap), nil\\npkg/stdlib/core.go:74:\\t\\treturn makeResultErr(parseErr.Error(), heap), nil\\npkg/stdlib/core.go:76:\\treturn makeResultOk(vm.IntVal(n), heap), nil\\npkg/stdlib/core.go:90:\\t\\treturn makeResultErr(parseErr.Error(), heap), nil\\npkg/stdlib/core.go:92:\\treturn makeResultOk(vm.FloatVal(f), heap), nil\\npkg/stdlib/core.go:133:\\t\\treturn makeResultErr(err.Error(), heap), nil\\npkg/stdlib/core.go:136:\\treturn makeResultOk(vm.ObjVal(idx), heap), nil\\npkg/stdlib/core.go:201:func makeResultOk(val vm.Value, heap *vm.Heap) vm.Value {\\npkg/stdlib/core.go:206:func makeResultErr(msg string, heap *vm.Heap) vm.Value {\\npkg/stdlib/core.go:339:",
+  "result_summary": "",
   "symbol_scope": [],
   "tokens_used": 0,
   "cost_usd": 0.0,

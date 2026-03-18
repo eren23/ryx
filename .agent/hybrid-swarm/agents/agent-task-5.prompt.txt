@@ -1,25 +1,5 @@
-# Task: Math stdlib expansion
+# Task: Fix VM stack underflow panics in arithmetic operations
 
-Add 16 new math functions to pkg/stdlib/math_ops.go.
+E2E tests fibonacci.ryx, quicksort.ryx, and matrix_multiply.ryx crash with Go-level panics: 'index out of range [-1]' in fiber.go:89 (Pop) and 'index out of range [1] with length 1'. These indicate the VM is trying to pop from an empty stack or access stack positions that don't exist. This means the bytecode being generated has mismatched push/pop counts for some operation sequences. Common causes: binary operations not finding both operands on stack, function calls not properly setting up arguments, or return values not being handled correctly. Debug by examining the bytecode generated for fibonacci.ryx (a simple case) and tracing the stack state. Fix the codegen to emit correct stack-balanced bytecode.
 
-All follow the existing pattern using toFloat() helper for auto-promotion.
-
-Trigonometric (all 1-arg, return Float):
-- Sin, Cos, Tan, Asin, Acos, Atan: wrap math.Sin/Cos/Tan/Asin/Acos/Atan(toFloat(args[0]))
-- Atan2: 2 args, math.Atan2(toFloat(args[0]), toFloat(args[1]))
-
-Logarithmic/Exponential (all 1-arg, return Float):
-- Log, Log2, Log10, Exp: wrap corresponding math.* functions
-
-Constants (0-arg, return Float):
-- Pi: returns FloatVal(math.Pi)
-- E: returns FloatVal(math.E)
-
-Integer math:
-- Gcd: 2 Int args, Euclidean algorithm with absolute values
-- Lcm: 2 Int args, lcm(a,b) = |a|/gcd(a,b)*|b|, returns 0 if either is 0
-- Clamp: 3 args (x, lo, hi). If all Int, use Int comparison. Otherwise promote to Float.
-
-See goal spec section 4 for exact implementations and edge case handling.
-
-Target files: pkg/stdlib/math_ops.go
+Target files: pkg/codegen/codegen.go, pkg/vm/vm.go, pkg/vm/fiber.go

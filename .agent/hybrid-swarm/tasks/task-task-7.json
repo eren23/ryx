@@ -1,21 +1,34 @@
 {
   "task_id": "task-7",
-  "title": "Array stdlib expansion",
-  "description": "Add 12 new array functions to pkg/stdlib/array_ops.go.\n\nFunctions using CallbackInvoker (higher-order):\n- ArrayFind: 2 args (array, predicate), returns makeResultOk(first match) or makeResultErr(\"not found\")\n- ArrayAny: 2 args, returns BoolVal(true) on first truthy predicate result, false for empty\n- ArrayAll: 2 args, returns BoolVal(false) on first non-truthy, true for empty\n\nNumeric aggregation (1-arg, check all elements are Int or Float):\n- ArraySum: returns Int if all Int, Float if any Float, IntVal(0) for empty\n- ArrayMin: returns minimum via compareValues, errors on empty\n- ArrayMax: returns maximum via compareValues, errors on empty\n\nSlicing/chunking:\n- ArrayTake: 2 args (array, n:Int), returns first min(n, len) elements, empty for n<=0\n- ArrayDrop: 2 args, removes first n elements\n- ArraySlice: 3 args (array, start:Int, end:Int), supports negative indices, clamps to bounds\n- ArrayChunk: 2 args (array, size:Int), errors if size<=0, returns array of arrays\n\nOther:\n- ArrayUnique: 1 arg, O(n\u00b2) dedup using Value.Equal, preserves first occurrence order\n- ArrayJoin: 2 args (array of strings, separator string), uses resolveString on each element, returns joined string\n\nSee goal spec section 6 for exact implementations.",
-  "status": "done",
+  "title": "Fix hash_map and json_parser value computation returning zeros",
+  "description": "E2E tests hash_map.ryx and json_parser.ryx produce all zeros instead of expected computed values. The programs compile and run without crashing but produce wrong results. This likely indicates that struct field access (FIELD_GET/FIELD_SET) or enum variant destructuring is not working correctly, returning default zero values instead of actual stored values. Alternatively, variable mutation (let mut + reassignment) may not be working properly in the VM. Read both .ryx test files to understand what operations they perform, then trace the issue - possibly in how STORE_LOCAL/LOAD_LOCAL handles mutable variables, or how struct/enum field access works in the VM dispatch loop.",
+  "status": "pending",
   "task_kind": "implement",
-  "role_hint": "impl-claude",
-  "deps": [],
+  "role_hint": "impl",
+  "deps": [
+    "task-1"
+  ],
   "target_files": [
-    "pkg/stdlib/array_ops.go"
+    "pkg/vm/vm.go",
+    "pkg/vm/value.go",
+    "pkg/vm/heap.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"4c24e483-74f3-4575-b907-1686d9487ebd\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"8b3e6f6e-7c63-4759-890f-bbd2e4facb55\",\"session_id\":\"8e4c0a91-59d6-418c-aed0-9f192bbfd20d\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"4c24e483-74f3-4575-b907-1686d9487ebd\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "result_summary": "",
   "symbol_scope": [],
-  "tokens_used": 7525,
+  "tokens_used": 0,
   "cost_usd": 0.0,
-  "attempt_count": 0,
-  "attempt_history": [],
+  "attempt_count": 1,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-18T21:43:51.650853+00:00",
+      "duration_s": 600.1625390052795,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
   "has_diff": false
 }

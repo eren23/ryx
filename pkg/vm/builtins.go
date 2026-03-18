@@ -291,7 +291,7 @@ func displayObject(v Value, heap *Heap) string {
 	obj := heap.Get(v.AsObj())
 	switch o := obj.Data.(type) {
 	case *StringObj:
-		return fmt.Sprintf("%q", o.Value)
+		return o.Value
 	case *ArrayObj:
 		parts := make([]string, len(o.Elements))
 		for i, e := range o.Elements {

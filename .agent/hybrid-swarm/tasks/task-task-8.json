@@ -1,21 +1,33 @@
 {
   "task_id": "task-8",
-  "title": "String stdlib expansion",
-  "description": "Add 6 new string functions to pkg/stdlib/string_ops.go.\n\n1. StringIndexOf: 2 args (haystack, needle), returns codepoint index (not byte index) using strings.Index then utf8.RuneCountInString for conversion. Returns -1 if not found.\n\n2. StringRepeat: 2 args (string, n:Int), uses strings.Repeat, errors if n < 0.\n\n3. StringPadLeft: 3 args (string, width:Int, pad_char:Char), pads left with pad_char to reach width codepoints. Returns original if already >= width.\n\n4. StringPadRight: 3 args, same as PadLeft but pads on right.\n\n5. StringBytes: 1 arg (string), returns array of IntVal byte values from UTF-8 encoding.\n\n6. StringJoin: 2 args, delegates to ArrayJoin (same package, same signature).\n\nImports needed: add \"unicode/utf8\" if not already imported (it is). May need \"strings\" (already imported).\n\nSee goal spec section 7 for exact implementations and edge cases.",
-  "status": "done",
+  "title": "Fix brainfuck interpreter unknown tag output",
+  "description": "The brainfuck_interp.ryx E2E test outputs '<unknown tag=0>' instead of expected integer values '3' and '5'. This means the VM is printing values with an unrecognized ValueTag. The issue is likely that some operation (possibly array element access, char-to-int conversion, or arithmetic on values extracted from arrays) produces a Value with tag=0 which isn't handled by the display/print logic. Check how the brainfuck interpreter uses arrays (as the tape) and integer operations, then trace why the resulting values have tag 0. Fix either the VM operations that produce these malformed values or ensure tag 0 maps to a proper type.",
+  "status": "pending",
   "task_kind": "implement",
-  "role_hint": "impl-codex",
-  "deps": [],
+  "role_hint": "impl",
+  "deps": [
+    "task-1"
+  ],
   "target_files": [
-    "pkg/stdlib/string_ops.go"
+    "pkg/vm/vm.go",
+    "pkg/vm/value.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026e-c0b9-7c31-aabd-6d531f7a8753\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m checking the existing string stdlib file and any local goal/spec reference before editing, so the new functions match current calling conventions and error behavior.\"}}\n{\"type\":\"item.started\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/string_ops.go\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/string_ops.go\\\"\",\"aggregated_output\":\"package stdlib\\n\\nimport (\\n\\t\\\"fmt\\\"\\n\\t\\\"strings\\\"\\n\\t\\\"unicode/utf8\\\"\\n\\n\\t\\\"github.com/ryx-lang/ryx/pkg/vm\\\"\\n)\\n\\n// ---------------------------------------------------------------------------\\n// String operations \u2014 all operate on heap-allocated StringObj values\\n// ---------------------------------------------------------------------------\\n\\n// StringLen returns the number of Unicode codepoints in a string.\\nfunc StringLen(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_len: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\ts, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_len: %w\\\", err)\\n\\t}\\n\\treturn vm.IntVal(int64(utf8.RuneCountInString(s))), nil\\n}\\n\\n// StringSlice returns a substring from start (inclusive) to end (exclusive) indices,\\n// where indices count Unicode codepoints.\\nfunc StringSlice(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 3 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_slice: expected 3 arguments, got %d\\\", len(args))\\n\\t}\\n\\ts, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_slice: %w\\\", err)\\n\\t}\\n\\tstart := int(args[1].AsInt())\\n\\tend := int(args[2].AsInt())\\n\\n\\trunes := []rune(s)\\n\\truneLen := len(runes)\\n\\n\\t// Clamp indices to valid range.\\n\\tif start < 0 {\\n\\t\\tstart = 0\\n\\t}\\n\\tif end > runeLen {\\n\\t\\tend = runeLen\\n\\t}\\n\\tif start > end {\\n\\t\\tstart = end\\n\\t}\\n\\n\\tresult := string(runes[start:end])\\n\\tidx := heap.AllocString(result)\\n\\treturn vm.ObjVal(idx), nil\\n}\\n\\n// StringContains checks whether haystack contains needle.\\nfunc StringContains(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_contains: expected 2 arguments, got %d\\\", len(args))\\n\\t}\\n\\thaystack, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_contains: %w\\\", err)\\n\\t}\\n\\tneedle, err := resolveString(args[1], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_contains: %w\\\", err)\\n\\t}\\n\\treturn vm.BoolVal(strings.Contains(haystack, needle)), nil\\n}\\n\\n// StringSplit splits a string by a separator, returning an array of strings.\\nfunc StringSplit(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_split: expected 2 arguments, got %d\\\", len(args))\\n\\t}\\n\\ts, err := resolveString(args[0], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_split: %w\\\", err)\\n\\t}\\n\\tsep, err := resolveString(args[1], heap)\\n\\tif err != nil {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_split: %w\\\", err)\\n\\t}\\n\\tparts := strings.Split(s, sep)\\n\\telems := make([]vm.Value, len(parts))\\n\\tfor i, p := range parts {\\n\\t\\telems[i] = vm.ObjVal(heap.AllocString(p))\\n\\t}\\n\\tidx := heap.AllocArray(elems)\\n\\treturn vm.ObjVal(idx), nil\\n}\\n\\n// StringTrim removes leading and trailing whitespace.\\nfunc StringTrim(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"string_trim: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\ts, err := resolveStr",
+  "result_summary": "",
   "symbol_scope": [],
   "tokens_used": 0,
   "cost_usd": 0.0,
-  "attempt_count": 0,
-  "attempt_history": [],
+  "attempt_count": 1,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-18T21:53:51.724979+00:00",
+      "duration_s": 600.0374207496643,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
   "has_diff": false
 }

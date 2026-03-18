@@ -1,17 +1,5 @@
-# Task: ObjMap core types and heap allocation
+# Task: Fix println string quoting in VM builtins
 
-Add MapObj heap type to pkg/vm/value.go and AllocMap to pkg/vm/heap.go.
+The hello.ryx E2E test fails because println outputs '"Hello, World!"' (with quotes) instead of 'Hello, World!' (without quotes). The VM's PRINTLN instruction or the builtins.go print implementation is including string literal quotes in the output. Fix the VM's print/println handling in pkg/vm/builtins.go and/or pkg/vm/vm.go to strip surrounding quotes from string values when printing. This likely affects hash_map and json_parser output too since they show '0' instead of computed values (probably printing the wrong representation). Verify hello.ryx produces 'Hello, World!' without quotes.
 
-In value.go:
-1. Add ObjMap byte constant = 0x27 after ObjChannel = 0x26
-2. Add mapEntry struct with Key and Value fields (both vm.Value)
-3. Add MapObj struct with Buckets (map[uint64][]mapEntry) and Count (int)
-4. Add exported ComputeHash(v Value, heap *Heap) (uint64, error) function that uses fnv.New64a() + hashValue, rejecting ClosureObj and ChannelObj as unhashable
-5. Add MapObj methods: Get, Set, Delete, Contains, Keys, Values, Entries (see goal spec sections 1.2-1.4 for exact signatures and implementations)
-
-In heap.go:
-6. Add AllocMap() uint32 method that allocates a HeapObject with TypeID=ObjMap and Data=&MapObj{Buckets: make(map[uint64][]mapEntry), Count: 0}
-
-Note: Must import "hash/fnv" in value.go. The mapEntry type and MapObj must be exported so stdlib/map_ops.go can reference them.
-
-Target files: pkg/vm/value.go, pkg/vm/heap.go
+Target files: pkg/vm/vm.go, pkg/vm/builtins.go, pkg/vm/value.go

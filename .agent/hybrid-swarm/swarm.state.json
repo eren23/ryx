@@ -1,13 +1,13 @@
 {
-  "run_id": "09202efb",
-  "goal": "# Swarm Goal \u2014 Ryx Standard Library Expansion + Map<K,V>\n\nAdd a built-in `Map` collection type and expand the standard library with\nmath, time, random, array, string, and filesystem functions.  **No parser,\nresolver, type-checker, HIR, MIR, or codegen changes are required.**\nEverything is implemented through the existing `BuiltinRegistry` mechanism\nand heap object system.\n\n---\n\n## 0) Overview & Motivation\n\nThe Ryx language is feature-complete in its compiler pipeline but its\nstandard library has significant gaps and it lacks the most fundamental\ncollection type: a hash map / dictionary.\n\nThe existing `tests/testdata/programs/hash_map.ryx` simulates a hash map\nwith parallel arrays.  After this project, that program can be rewritten\nwith real map operations:\n\n### Sample Program: Word Counter\n```ryx\nfn main() {\n    let words = string_split(\"the cat sat on the mat the cat\", \" \");\n    let mut counts = map_new();\n    let mut i = 0;\n    while i < array_len(words) {\n        let w = words[i];\n        if map_contains(counts, w) {\n            let c = map_get(counts, w);\n            counts = map_set(counts, w, c + 1);\n        } else {\n            counts = map_set(counts, w, 1);\n        };\n        i = i + 1;\n    };\n    println(map_len(counts));\n    println(map_get(counts, \"the\"));\n    println(map_get(counts, \"cat\"));\n    println(map_get(counts, \"sat\"));\n    println(map_contains(counts, \"dog\"));\n}\n```\nExpected output:\n```\n5\n3\n2\n1\nfalse\n```\n\n### Sample Program: Math & Conversions\n```ryx\nfn main() {\n    println(sin(pi() / 2.0));\n    println(cos(0.0));\n    println(floor(3.7));\n    println(ceil(3.2));\n    println(gcd(12, 8));\n    println(clamp(15, 0, 10));\n    println(bool_to_string(true));\n    println(int_to_char(65));\n}\n```\nExpected output:\n```\n1\n1\n3\n4\n4\n10\ntrue\nA\n```\n\n### Sample Program: Array & String Utilities\n```ryx\nfn main() {\n    let nums = [3, 1, 4, 1, 5, 9, 2, 6];\n    println(array_sum(nums));\n    println(array_min(nums));\n    println(array_max(nums));\n    println(array_any(nums, |x: Int| -> Bool { x > 8 }));\n    println(array_all(nums, |x: Int| -> Bool { x > 0 }));\n\n    let uniq = array_unique(nums);\n    println(array_len(uniq));\n\n    let chunks = array_chunk([1,2,3,4,5], 2);\n    println(array_len(chunks));\n\n    println(string_repeat(\"ab\", 3));\n    println(string_pad_left(\"42\", 5, '0'));\n    println(string_index_of(\"hello world\", \"world\"));\n    println(string_join([\"a\", \"b\", \"c\"], \"-\"));\n}\n```\nExpected output:\n```\n31\n1\n9\ntrue\ntrue\n7\n3\nababab\n00042\n6\na-b-c\n```\n\n### What Success Looks Like\n\nAfter this project completes:\n- `go test ./pkg/vm/... -v` passes with new Map heap type tests\n- `go test ./pkg/gc/... -v` passes with Map GC integration tests\n- `go test ./pkg/stdlib/... -v` passes with all new stdlib function tests\n- `go test ./tests/integration/... -v` passes with new `.ryx` test programs\n- All 753+ existing tests continue to pass\n\n---\n\n## 1) Map<K,V> Heap Type\n\n### Architectural Insight\n\nMap does NOT need any compiler changes.  The existing `BuiltinRegistry`\nmechanism supports calling `map_new()`, `map_get(m, k)`, `map_set(m, k, v)`\nas plain function calls \u2014 exactly how array operations work.  Map is\nimplemented as a **heap-resident object** (like `ArrayObj`, `StructObj`)\nwith **stdlib functions** (like `array_ops.go`).\n\n### 1.1) ObjMap Constant\n\nIn `pkg/vm/value.go`, add the new object type constant:\n\n```go\nconst (\n    ObjString  byte = 0x20\n    ObjArray   byte = 0x21\n    ObjTuple   byte = 0x22\n    ObjStruct  byte = 0x23\n    ObjEnum    byte = 0x24\n    ObjClosure byte = 0x25\n    ObjChannel byte = 0x26\n    ObjMap     byte = 0x27  // \u2190 NEW\n)\n```\n\n### 1.2) MapObj Struct\n\nIn `pkg/vm/value.go`, add these types:\n\n```go\n// mapEntry represents one key-value pair in a hash bucket.\n// Collisions within the same bucket are handled by linear scan\n// using Value.Equal() for key comparison.\ntype mapEntry struct {\n    Key   Value\n    Value Value\n}\n\n// MapObj is a hash map from any hashable Value to any Value.\n// Uses FNV-1a hashing (via the existing hashValue function) and\n// separate chaining with Go slices for collision resolution.\ntype MapObj struct {\n    Buckets    map[uint64][]mapEntry  // hash \u2192 chain of entries\n    Count      int                    // number of entries (O(1) len)\n}\n```\n\n**Design rationale:**\n- `map[uint64][]mapEntry` \u2014 Go map keyed by 64-bit FNV-1a hash of\n  the Ryx `Value`.  Collisions within the same hash are resolved by\n  linear scan of the `[]mapEntry` slice, comparing keys with\n  `Value.Equal()`.\n- This reuses `BuiltinHash` / `hashValue` which already handles all\n  Ryx value types (Int, Float, Bool, Char, String, Array, Tuple,\n  Struct, Enum).\n- `Count` avoids O(n) length computation.\n\n**Key types that are hashable** (already supported by `hashValue`):\n- Int, Float, Bool, Char, Unit (primitives)\n- String, Array, Tuple, Struct, Enum (heap objects)\n\n**Key types that are NOT hashable** (no `hashValue` case):\n- Closure, Channel \u2014 using these as keys is a runtime error\n\n### 1.3) Helper: computeHash\n\nAdd a helper function accessible to both `value.go` and `map_ops.go`:\n\n```go\n// computeHash returns the FNV-1a hash of a Value.\n// Used internally by map operations. Errors on unhashable types\n// (Closure, Channel).\nfunc ComputeHash(v Value, heap *Heap) (uint64, error) {\n    if v.Tag == TagObj {\n        obj := heap.Get(v.AsObj())\n        switch obj.Data.(type) {\n        case *ClosureObj:\n            return 0, fmt.Errorf(\"unhashable type: closure\")\n        case *ChannelObj:\n            return 0, fmt.Errorf(\"unhashable type: channel\")\n        }\n    }\n    h := fnv.New64a()\n    hashValue(v, heap, h)\n    return h.Sum64(), nil\n}\n```\n\n### 1.4) MapObj Methods\n\nAdd these methods on `MapObj` (in `pkg/vm/value.go` or a new\n`pkg/vm/map.go` file \u2014 either is acceptable):\n\n```go\n// Get retrieves the value for key. Returns (value, true) if found,\n// (UnitVal(), false) if not found.\nfunc (m *MapObj) Get(key Value, heap *Heap) (Value, bool, error) {\n    hash, err := ComputeHash(key, heap)\n    if err != nil {\n        return UnitVal(), false, err\n    }\n    bucket := m.Buckets[hash]\n    for _, entry := range bucket {\n        if entry.Key.Equal(key, heap) {\n            return entry.Value, true, nil\n        }\n    }\n    return UnitVal(), false, nil\n}\n\n// Set inserts or updates a key-value pair. Returns true if the key\n// was newly inserted, false if it was updated.\nfunc (m *MapObj) Set(key, value Value, heap *Heap) (bool, error) {\n    hash, err := ComputeHash(key, heap)\n    if err != nil {\n        return false, err\n    }\n    bucket := m.Buckets[hash]\n    for i, entry := range bucket {\n        if entry.Key.Equal(key, heap) {\n            m.Buckets[hash][i].Value = value\n            return false, nil  // updated existing\n        }\n    }\n    m.Buckets[hash] = append(bucket, mapEntry{Key: key, Value: value})\n    m.Count++\n    return true, nil  // newly inserted\n}\n\n// Delete removes a key. Returns true if the key existed.\nfunc (m *MapObj) Delete(key Value, heap *Heap) (bool, error) {\n    hash, err := ComputeHash(key, heap)\n    if err != nil {\n        return false, err\n    }\n    bucket := m.Buckets[hash]\n    for i, entry := range bucket {\n        if entry.Key.Equal(key, heap) {\n            // Remove by swapping with last element\n            m.Buckets[hash][i] = m.Buckets[hash][len(bucket)-1]\n            m.Buckets[hash] = m.Buckets[hash][:len(bucket)-1]\n            if len(m.Buckets[hash]) == 0 {\n                delete(m.Buckets, hash)\n            }\n            m.Count--\n            return true, nil\n        }\n    }\n    return false, nil\n}\n\n// Contains checks if a key exists. O(1) average case.\nfunc (m *MapObj) Contains(key Value, heap *Heap) (bool, error) {\n    _, found, err := m.Get(key, heap)\n    return found, err\n}\n\n// Keys returns all keys as a slice of Values.\n// Order is non-deterministic (Go map iteration order).\nfunc (m *MapObj) Keys() []Value {\n    keys := make([]Value, 0, m.Count)\n    for _, bucket := range m.Buckets {\n        for _, entry := range bucket {\n            keys = append(keys, entry.Key)\n        }\n    }\n    return keys\n}\n\n// Values returns all values as a slice of Values.\nfunc (m *MapObj) Values() []Value {\n    vals := make([]Value, 0, m.Count)\n    for _, bucket := range m.Buckets {\n        for _, entry := range bucket {\n            vals = append(vals, entry.Value)\n        }\n    }\n    return vals\n}\n\n// Entries returns all entries as a slice of (key, value) pairs.\nfunc (m *MapObj) Entries() []mapEntry {\n    entries := make([]mapEntry, 0, m.Count)\n    for _, bucket := range m.Buckets {\n        entries = append(entries, bucket...)\n    }\n    return entries\n}\n```\n\n### 1.5) AllocMap on Heap\n\nIn `pkg/vm/heap.go`, add:\n\n```go\nfunc (h *Heap) AllocMap() uint32 {\n    return h.Alloc(HeapObject{\n        Header: ObjectHeader{TypeID: ObjMap, Size: 0},\n        Data: &MapObj{\n            Buckets: make(map[uint64][]mapEntry),\n            Count:   0,\n        },\n    })\n}\n```\n\nNote: `Size` in the header is updated to `m.Count` when accessed\nvia `StringValue` or for display, but the canonical count is\n`MapObj.Count`.\n\n### 1.6) Value Trait Implementations for MapObj\n\nEach of these functions in `pkg/vm/builtins.go` (or `value.go` as\nappropriate) needs a new `case *MapObj` branch:\n\n#### Equal()\n```go\ncase *MapObj:\n    sb := ob.Data.(*MapObj)\n    if sa.Count != sb.Count {\n        return false\n    }\n    // For each entry in sa, check sb has same key\u2192value\n    for _, bucket := range sa.Buckets {\n        for _, entry := range bucket {\n            val, found, _ := sb.Get(entry.Key, heap)\n            if !found || !entry.Value.Equal(val, heap) {\n                return false\n            }\n        }\n    }\n    return true\n```\n\n#### StringValue()\n```go\ncase *MapObj:\n    if o.Count == 0 {\n        return \"{}\"\n    }\n    parts := make([]string, 0, o.Count)\n    for _, bucket := range o.Buckets {\n        for _, entry := range bucket {\n            k := StringValue(entry.Key, heap)\n            v := StringValue(entry.Value, heap)\n            parts = append(parts, k+\": \"+v)\n        }\n    }\n    return \"{\" + strings.Join(parts, \", \") + \"}\"\n```\n\n#### deepClone()\n```go\ncase *MapObj:\n    newBuckets := make(map[uint64][]mapEntry, len(o.Buckets))\n    for hash, bucket := range o.Buckets {\n        newBucket := make([]mapEntry, len(bucket))\n        for i, entry := range bucket {\n            newBucket[i] = mapEntry{\n                Key:   deepClone(entry.Key, heap),\n                Value: deepClone(entry.Value, heap),\n            }\n        }\n        newBuckets[hash] = newBucket\n    }\n    idx := heap.Alloc(HeapObject{\n        Header: ObjectHeader{TypeID: ObjMap, Size: uint32(o.Count)},\n        Data: &MapObj{\n            Buckets: newBuckets,\n            Count:   o.Count,\n        },\n    })\n    return ObjVal(idx)\n```\n\n#### hashValue()\n```go\ncase *MapObj:\n    // Hash maps are order-independent. To produce a consistent hash\n    // regardless of insertion order, XOR the hashes of all entries.\n    var combined uint64\n    for _, bucket := range o.Buckets {\n        for _, entry := range bucket {\n            eh := fnv.New64a()\n            hashValue(entry.Key, heap, eh)\n            hashValue(entry.Value, heap, eh)\n            combined ^= eh.Sum64()\n        }\n    }\n    b := [8]byte{}\n    for i := 0; i < 8; i++ {\n        b[i] = byte(combined >> (i * 8))\n    }\n    h.Write(b[:])\n```\n\n#### deepCompare()\n```go\ncase *MapObj:\n    sb := ob.Data.(*MapObj)\n    // Compare by count first\n    if sa.Count < sb.Count {\n        return -1\n    }\n    if sa.Count > sb.Count {\n        return 1\n    }\n    return 0  // Maps with same count are equal in ordering\n```\n\n---\n\n## 2) GC Integration for Maps\n\n### 2.1) KindMap Object Kind\n\nIn `pkg/gc/gc.go`, add `KindMap` to the `ObjectKind` enum:\n\n```go\ntype ObjectKind byte\nconst (\n    KindArray   ObjectKind = iota\n    KindStruct\n    KindEnum\n    KindClosure\n    KindChannel\n    KindString\n    KindUpvalue\n    KindFiber\n    KindMap     // \u2190 NEW\n)\n```\n\n### 2.2) GC Object for Map\n\nWhen a `MapObj` is allocated on the VM heap, a corresponding GC\n`Object` must be created with `KindMap` and all referenced Values\ntraced as children.\n\n**Children of a MapObj:**\n- Every key that is a heap object (`Tag == TagObj`)\n- Every value that is a heap object (`Tag == TagObj`)\n\nBoth keys AND values must be traced.  If a key references a String\nand a value references an Array, both the String and Array must\nsurvive GC as long as the Map is reachable.\n\n### 2.3) Tracing Pattern\n\nFollow the channel GC integration pattern.  In the VM's GC bridge\n(where `HeapObject` \u2192 `gc.Object` conversion happens), add:\n\n```go\ncase *MapObj:\n    var children []*gc.Object\n    for _, bucket := range m.Buckets {\n        for _, entry := range bucket {\n            if entry.Key.Tag == vm.TagObj {\n                children = append(children, gcObjectFor(entry.Key.AsObj()))\n            }\n            if entry.Value.Tag == vm.TagObj {\n                children = append(children, gcObjectFor(entry.Value.AsObj()))\n            }\n        }\n    }\n    gcObj := heap.Alloc(gc.KindMap, estimateMapSize(m), children...)\n```\n\n### 2.4) Write Barrier Triggers\n\nWrite barriers must fire on mutation operations:\n\n- **`map_set(m, k, v)`** \u2014 when inserting or updating an entry, both\n  the key and value may be new heap references.  Call\n  `BarrierMapSet(mapGCObj, keyGCObj, valueGCObj)`.\n\n- **`map_delete(m, k)`** \u2014 removal does not create new references,\n  so no barrier is needed.  However, if the GC uses a snapshot-at-\n  the-beginning strategy, the barrier should also fire on delete to\n  re-gray the map.  Follow the same strategy as `BarrierIndexSet`.\n\n- **`map_merge(m1, m2)`** \u2014 creates a new map, so all children of\n  the new map are set at allocation time.  No barrier needed for\n  the new map (it starts Gray during mark phase per `Alloc` rules).\n\nAdd convenience wrapper in `pkg/gc/write_barrier.go`:\n\n```go\nfunc (h *Heap) BarrierMapSet(mapObj, keyObj, valueObj *Object) {\n    h.WriteBarrier(mapObj, keyObj)\n    h.WriteBarrier(mapObj, valueObj)\n}\n```\n\n### 2.5) Size Estimation\n\nFor GC accounting, estimate MapObj size as:\n\n```go\nfunc estimateMapSize(m *MapObj) uint64 {\n    // Base overhead: Go map header + bucket pointers\n    // Plus entry count \u00d7 (key Value 16 bytes + value Value 16 bytes)\n    return uint64(64 + m.Count*32)\n}\n```\n\n---\n\n## 3) Map Stdlib Functions (12 functions)\n\nAll functions go in a new file `pkg/stdlib/map_ops.go` and are\nregistered in `pkg/stdlib/core.go` via `RegisterAll`.\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// Map operations (map_ops.go)\nr.Register(\"map_new\", MapNew)\nr.Register(\"map_get\", MapGet)\nr.Register(\"map_set\", MapSet)\nr.Register(\"map_delete\", MapDelete)\nr.Register(\"map_contains\", MapContains)\nr.Register(\"map_len\", MapLen)\nr.Register(\"map_keys\", MapKeys)\nr.Register(\"map_values\", MapValues)\nr.Register(\"map_entries\", MapEntries)\nr.Register(\"map_merge\", MapMerge)\nr.Register(\"map_filter\", MapFilter)\nr.Register(\"map_map\", MapMapValues)\n```\n\n### Helper: resolveMap\n\n```go\nfunc resolveMap(v vm.Value, heap *vm.Heap) (*vm.MapObj, error) {\n    if v.Tag != vm.TagObj {\n        return nil, fmt.Errorf(\"expected map, got tag=%d\", v.Tag)\n    }\n    obj := heap.Get(v.AsObj())\n    if obj.Header.TypeID != vm.ObjMap {\n        return nil, fmt.Errorf(\"expected map, got object type=%d\", obj.Header.TypeID)\n    }\n    m, ok := obj.Data.(*vm.MapObj)\n    if !ok {\n        return nil, fmt.Errorf(\"expected map object data\")\n    }\n    return m, nil\n}\n```\n\n### 3.1) map_new\n\n```\nSignature:  map_new() -> Map\nArguments:  0\nReturns:    A new empty map (heap-allocated MapObj)\nErrors:     None\n```\n\n```go\nfunc MapNew(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 0 {\n        return vm.UnitVal(), fmt.Errorf(\"map_new: expected 0 args, got %d\", len(args))\n    }\n    idx := heap.AllocMap()\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 3.2) map_get\n\n```\nSignature:  map_get(m: Map, key: Any) -> Any\nArguments:  2 (map, key)\nReturns:    The value associated with key\nErrors:     Runtime error if key not found (NOT a Result \u2014 keeps API simple)\n            Runtime error if key type is unhashable (Closure, Channel)\n```\n\n```go\nfunc MapGet(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_get: expected 2 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_get: %w\", err)\n    }\n    val, found, err := m.Get(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_get: %w\", err)\n    }\n    if !found {\n        keyStr := vm.StringValue(args[1], heap)\n        return vm.UnitVal(), fmt.Errorf(\"map_get: key not found: %s\", keyStr)\n    }\n    return val, nil\n}\n```\n\n**Edge cases:**\n- `map_get(empty_map, \"x\")` \u2192 runtime error \"key not found: x\"\n- `map_get(m, closure_val)` \u2192 runtime error \"unhashable type: closure\"\n\n### 3.3) map_set\n\n```\nSignature:  map_set(m: Map, key: Any, value: Any) -> Map\nArguments:  3 (map, key, value)\nReturns:    The same map (mutated in place) for chaining convenience\nErrors:     Runtime error if key type is unhashable\n```\n\n**Important:** `map_set` mutates the map in place (like `array_push`\nmutates the array).  It returns the same map object for ergonomic\nchaining: `m = map_set(m, k, v)`.\n\n```go\nfunc MapSet(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 3 {\n        return vm.UnitVal(), fmt.Errorf(\"map_set: expected 3 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_set: %w\", err)\n    }\n    _, err = m.Set(args[1], args[2], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_set: %w\", err)\n    }\n    return args[0], nil  // return same map for chaining\n}\n```\n\n**Edge cases:**\n- `map_set(m, \"key\", 42)` when \"key\" already exists \u2192 updates value, returns m\n- `map_set(m, \"key\", 42)` when \"key\" doesn't exist \u2192 inserts, returns m\n- `map_set(m, closure, 1)` \u2192 runtime error\n\n### 3.4) map_delete\n\n```\nSignature:  map_delete(m: Map, key: Any) -> Map\nArguments:  2 (map, key)\nReturns:    The same map (mutated) with the key removed\nErrors:     Runtime error if key type is unhashable\n            Silently succeeds if key not found (idempotent)\n```\n\n```go\nfunc MapDelete(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_delete: expected 2 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_delete: %w\", err)\n    }\n    _, err = m.Delete(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_delete: %w\", err)\n    }\n    return args[0], nil\n}\n```\n\n### 3.5) map_contains\n\n```\nSignature:  map_contains(m: Map, key: Any) -> Bool\nArguments:  2 (map, key)\nReturns:    true if key exists, false otherwise\nErrors:     Runtime error if key type is unhashable\n```\n\n```go\nfunc MapContains(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_contains: expected 2 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_contains: %w\", err)\n    }\n    found, err := m.Contains(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_contains: %w\", err)\n    }\n    return vm.BoolVal(found), nil\n}\n```\n\n### 3.6) map_len\n\n```\nSignature:  map_len(m: Map) -> Int\nArguments:  1 (map)\nReturns:    Number of key-value pairs\nErrors:     None (argument type checked)\n```\n\n```go\nfunc MapLen(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"map_len: expected 1 arg, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_len: %w\", err)\n    }\n    return vm.IntVal(int64(m.Count)), nil\n}\n```\n\n### 3.7) map_keys\n\n```\nSignature:  map_keys(m: Map) -> [Any]\nArguments:  1 (map)\nReturns:    Array of all keys (order is non-deterministic)\nErrors:     None\n```\n\n```go\nfunc MapKeys(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"map_keys: expected 1 arg, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_keys: %w\", err)\n    }\n    keys := m.Keys()\n    idx := heap.AllocArray(keys)\n    return vm.ObjVal(idx), nil\n}\n```\n\n**Note on ordering:** Since Go maps have non-deterministic iteration\norder, `map_keys` returns keys in an unspecified order.  Test programs\nshould test key presence (via `array_contains`) or sort keys before\ncomparing, NOT rely on a specific order.\n\n### 3.8) map_values\n\n```\nSignature:  map_values(m: Map) -> [Any]\nArguments:  1 (map)\nReturns:    Array of all values (order matches map_keys)\nErrors:     None\n```\n\n```go\nfunc MapValues(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"map_values: expected 1 arg, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_values: %w\", err)\n    }\n    vals := m.Values()\n    idx := heap.AllocArray(vals)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 3.9) map_entries\n\n```\nSignature:  map_entries(m: Map) -> [(Any, Any)]\nArguments:  1 (map)\nReturns:    Array of (key, value) tuples\nErrors:     None\n```\n\n```go\nfunc MapEntries(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"map_entries: expected 1 arg, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_entries: %w\", err)\n    }\n    entries := m.Entries()\n    tuples := make([]vm.Value, len(entries))\n    for i, e := range entries {\n        idx := heap.AllocTuple([]vm.Value{e.Key, e.Value})\n        tuples[i] = vm.ObjVal(idx)\n    }\n    arrIdx := heap.AllocArray(tuples)\n    return vm.ObjVal(arrIdx), nil\n}\n```\n\n### 3.10) map_merge\n\n```\nSignature:  map_merge(m1: Map, m2: Map) -> Map\nArguments:  2 (map, map)\nReturns:    A NEW map containing all entries from both maps.\n            If both maps have the same key, m2's value wins.\nErrors:     None (both args type-checked)\n```\n\n```go\nfunc MapMerge(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_merge: expected 2 args, got %d\", len(args))\n    }\n    m1, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_merge: arg 1: %w\", err)\n    }\n    m2, err := resolveMap(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_merge: arg 2: %w\", err)\n    }\n\n    // Create new map, copy m1 entries, then m2 entries (m2 wins on conflict)\n    newIdx := heap.AllocMap()\n    newMap := heap.Get(newIdx).Data.(*vm.MapObj)\n\n    for _, bucket := range m1.Buckets {\n        for _, entry := range bucket {\n            newMap.Set(entry.Key, entry.Value, heap)\n        }\n    }\n    for _, bucket := range m2.Buckets {\n        for _, entry := range bucket {\n            newMap.Set(entry.Key, entry.Value, heap)\n        }\n    }\n\n    return vm.ObjVal(newIdx), nil\n}\n```\n\n### 3.11) map_filter\n\n```\nSignature:  map_filter(m: Map, predicate: (Any, Any) -> Bool) -> Map\nArguments:  2 (map, function taking key and value, returning Bool)\nReturns:    A NEW map containing only entries where predicate returns true\nErrors:     Runtime error if CallbackInvoker is nil\n            Runtime error if predicate errors\n```\n\nUses the `CallbackInvoker` pattern from `array_ops.go`:\n\n```go\nfunc MapFilter(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_filter: expected 2 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_filter: %w\", err)\n    }\n    fn := args[1]\n    if CallbackInvoker == nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_filter: no callback invoker registered\")\n    }\n\n    newIdx := heap.AllocMap()\n    newMap := heap.Get(newIdx).Data.(*vm.MapObj)\n\n    for _, bucket := range m.Buckets {\n        for _, entry := range bucket {\n            result, callErr := CallbackInvoker(fn, []vm.Value{entry.Key, entry.Value}, heap)\n            if callErr != nil {\n                return vm.UnitVal(), fmt.Errorf(\"map_filter: callback error: %w\", callErr)\n            }\n            if result.IsTruthy() {\n                newMap.Set(entry.Key, entry.Value, heap)\n            }\n        }\n    }\n\n    return vm.ObjVal(newIdx), nil\n}\n```\n\n### 3.12) map_map\n\n```\nSignature:  map_map(m: Map, transform: (Any, Any) -> Any) -> Map\nArguments:  2 (map, function taking key and value, returning new value)\nReturns:    A NEW map with same keys but transformed values\nErrors:     Runtime error if CallbackInvoker is nil\n            Runtime error if transform errors\n```\n\n```go\nfunc MapMapValues(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"map_map: expected 2 args, got %d\", len(args))\n    }\n    m, err := resolveMap(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_map: %w\", err)\n    }\n    fn := args[1]\n    if CallbackInvoker == nil {\n        return vm.UnitVal(), fmt.Errorf(\"map_map: no callback invoker registered\")\n    }\n\n    newIdx := heap.AllocMap()\n    newMap := heap.Get(newIdx).Data.(*vm.MapObj)\n\n    for _, bucket := range m.Buckets {\n        for _, entry := range bucket {\n            result, callErr := CallbackInvoker(fn, []vm.Value{entry.Key, entry.Value}, heap)\n            if callErr != nil {\n                return vm.UnitVal(), fmt.Errorf(\"map_map: callback error: %w\", callErr)\n            }\n            newMap.Set(entry.Key, result, heap)\n        }\n    }\n\n    return vm.ObjVal(newIdx), nil\n}\n```\n\n---\n\n## 4) Math Stdlib Expansion (16 functions)\n\nAll functions go in `pkg/stdlib/math_ops.go`.  All take Int or Float\narguments (auto-promoted to Float where needed via the existing\n`toFloat` helper) and return Float unless otherwise noted.\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// Trigonometric (math_ops.go)\nr.Register(\"sin\", Sin)\nr.Register(\"cos\", Cos)\nr.Register(\"tan\", Tan)\nr.Register(\"asin\", Asin)\nr.Register(\"acos\", Acos)\nr.Register(\"atan\", Atan)\nr.Register(\"atan2\", Atan2)\n\n// Logarithmic/Exponential (math_ops.go)\nr.Register(\"log\", Log)\nr.Register(\"log2\", Log2)\nr.Register(\"log10\", Log10)\nr.Register(\"exp\", Exp)\n\n// Constants (math_ops.go)\nr.Register(\"pi\", Pi)\nr.Register(\"e\", E)\n\n// Integer math (math_ops.go)\nr.Register(\"gcd\", Gcd)\nr.Register(\"lcm\", Lcm)\nr.Register(\"clamp\", Clamp)\n```\n\n### 4.1) sin\n\n```\nSignature:  sin(x: Float) -> Float\nArguments:  1 (Float or Int, auto-promoted)\nReturns:    Sine of x (x in radians)\nEdge cases: sin(0.0) = 0.0, sin(pi/2) = 1.0, sin(NaN) = NaN, sin(\u00b1Inf) = NaN\n```\n\n```go\nfunc Sin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"sin: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Sin(toFloat(args[0]))), nil\n}\n```\n\n### 4.2) cos\n\n```\nSignature:  cos(x: Float) -> Float\nArguments:  1\nReturns:    Cosine of x (x in radians)\nEdge cases: cos(0.0) = 1.0, cos(pi) = -1.0, cos(NaN) = NaN, cos(\u00b1Inf) = NaN\n```\n\n```go\nfunc Cos(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"cos: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Cos(toFloat(args[0]))), nil\n}\n```\n\n### 4.3) tan\n\n```\nSignature:  tan(x: Float) -> Float\nArguments:  1\nReturns:    Tangent of x\nEdge cases: tan(0.0) = 0.0, tan(pi/2) \u2248 very large, tan(NaN) = NaN\n```\n\n```go\nfunc Tan(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"tan: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Tan(toFloat(args[0]))), nil\n}\n```\n\n### 4.4) asin\n\n```\nSignature:  asin(x: Float) -> Float\nArguments:  1\nReturns:    Arcsine of x (result in radians, range [-pi/2, pi/2])\nEdge cases: asin(0.0) = 0.0, asin(1.0) = pi/2\n            asin(x) where |x| > 1 = NaN (domain error)\n```\n\n```go\nfunc Asin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"asin: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Asin(toFloat(args[0]))), nil\n}\n```\n\n### 4.5) acos\n\n```\nSignature:  acos(x: Float) -> Float\nArguments:  1\nReturns:    Arccosine of x (result in radians, range [0, pi])\nEdge cases: acos(1.0) = 0.0, acos(0.0) = pi/2\n            acos(x) where |x| > 1 = NaN (domain error)\n```\n\n```go\nfunc Acos(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"acos: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Acos(toFloat(args[0]))), nil\n}\n```\n\n### 4.6) atan\n\n```\nSignature:  atan(x: Float) -> Float\nArguments:  1\nReturns:    Arctangent of x (result in radians, range (-pi/2, pi/2))\nEdge cases: atan(0.0) = 0.0, atan(1.0) = pi/4, atan(\u00b1Inf) = \u00b1pi/2\n```\n\n```go\nfunc Atan(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"atan: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Atan(toFloat(args[0]))), nil\n}\n```\n\n### 4.7) atan2\n\n```\nSignature:  atan2(y: Float, x: Float) -> Float\nArguments:  2\nReturns:    Angle in radians between positive x-axis and point (x, y)\n            Range (-pi, pi]\nEdge cases: atan2(0, 1) = 0, atan2(1, 0) = pi/2, atan2(0, -1) = pi\n```\n\n```go\nfunc Atan2(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"atan2: expected 2 args, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Atan2(toFloat(args[0]), toFloat(args[1]))), nil\n}\n```\n\n### 4.8) log\n\n```\nSignature:  log(x: Float) -> Float\nArguments:  1\nReturns:    Natural logarithm (base e) of x\nEdge cases: log(1.0) = 0.0, log(e()) \u2248 1.0\n            log(0.0) = -Inf, log(-1.0) = NaN\n```\n\n```go\nfunc Log(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"log: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Log(toFloat(args[0]))), nil\n}\n```\n\n### 4.9) log2\n\n```\nSignature:  log2(x: Float) -> Float\nArguments:  1\nReturns:    Base-2 logarithm of x\nEdge cases: log2(1.0) = 0.0, log2(8.0) = 3.0\n            log2(0.0) = -Inf, log2(-1.0) = NaN\n```\n\n```go\nfunc Log2(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"log2: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Log2(toFloat(args[0]))), nil\n}\n```\n\n### 4.10) log10\n\n```\nSignature:  log10(x: Float) -> Float\nArguments:  1\nReturns:    Base-10 logarithm of x\nEdge cases: log10(1.0) = 0.0, log10(100.0) = 2.0\n            log10(0.0) = -Inf, log10(-1.0) = NaN\n```\n\n```go\nfunc Log10(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"log10: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Log10(toFloat(args[0]))), nil\n}\n```\n\n### 4.11) exp\n\n```\nSignature:  exp(x: Float) -> Float\nArguments:  1\nReturns:    e raised to the power x\nEdge cases: exp(0.0) = 1.0, exp(1.0) \u2248 2.718...\n            exp(-Inf) = 0.0, exp(+Inf) = +Inf\n```\n\n```go\nfunc Exp(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"exp: expected 1 arg, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Exp(toFloat(args[0]))), nil\n}\n```\n\n### 4.12) pi\n\n```\nSignature:  pi() -> Float\nArguments:  0\nReturns:    The constant \u03c0 \u2248 3.141592653589793\n```\n\n```go\nfunc Pi(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 0 {\n        return vm.UnitVal(), fmt.Errorf(\"pi: expected 0 args, got %d\", len(args))\n    }\n    return vm.FloatVal(math.Pi), nil\n}\n```\n\n### 4.13) e\n\n```\nSignature:  e() -> Float\nArguments:  0\nReturns:    Euler's number e \u2248 2.718281828459045\n```\n\n```go\nfunc E(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 0 {\n        return vm.UnitVal(), fmt.Errorf(\"e: expected 0 args, got %d\", len(args))\n    }\n    return vm.FloatVal(math.E), nil\n}\n```\n\n### 4.14) gcd\n\n```\nSignature:  gcd(a: Int, b: Int) -> Int\nArguments:  2 (both must be Int)\nReturns:    Greatest common divisor of |a| and |b|\nEdge cases: gcd(0, 0) = 0, gcd(n, 0) = |n|, gcd(0, n) = |n|\n            gcd(-12, 8) = 4 (absolute values used)\n```\n\n```go\nfunc Gcd(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"gcd: expected 2 args, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagInt || args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"gcd: both arguments must be Int\")\n    }\n    a := args[0].AsInt()\n    b := args[1].AsInt()\n    if a < 0 { a = -a }\n    if b < 0 { b = -b }\n    for b != 0 {\n        a, b = b, a%b\n    }\n    return vm.IntVal(a), nil\n}\n```\n\n### 4.15) lcm\n\n```\nSignature:  lcm(a: Int, b: Int) -> Int\nArguments:  2 (both must be Int)\nReturns:    Least common multiple of |a| and |b|\nEdge cases: lcm(0, n) = 0, lcm(n, 0) = 0\n```\n\n```go\nfunc Lcm(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"lcm: expected 2 args, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagInt || args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"lcm: both arguments must be Int\")\n    }\n    a := args[0].AsInt()\n    b := args[1].AsInt()\n    if a < 0 { a = -a }\n    if b < 0 { b = -b }\n    if a == 0 || b == 0 {\n        return vm.IntVal(0), nil\n    }\n    // gcd via Euclidean algorithm\n    ga, gb := a, b\n    for gb != 0 {\n        ga, gb = gb, ga%gb\n    }\n    return vm.IntVal(a / ga * b), nil\n}\n```\n\n### 4.16) clamp\n\n```\nSignature:  clamp(x: Int|Float, lo: Int|Float, hi: Int|Float) -> Int|Float\nArguments:  3\nReturns:    x clamped to range [lo, hi]\n            If all args are Int, returns Int. Otherwise returns Float.\nEdge cases: clamp(5, 0, 10) = 5, clamp(-5, 0, 10) = 0, clamp(15, 0, 10) = 10\n            clamp(lo=5, hi=3) where lo > hi: returns lo (not undefined)\n```\n\n```go\nfunc Clamp(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 3 {\n        return vm.UnitVal(), fmt.Errorf(\"clamp: expected 3 args, got %d\", len(args))\n    }\n    // If all Int, use Int comparison\n    if args[0].Tag == vm.TagInt && args[1].Tag == vm.TagInt && args[2].Tag == vm.TagInt {\n        x := args[0].AsInt()\n        lo := args[1].AsInt()\n        hi := args[2].AsInt()\n        if x < lo { return vm.IntVal(lo), nil }\n        if x > hi { return vm.IntVal(hi), nil }\n        return vm.IntVal(x), nil\n    }\n    // Otherwise use Float\n    x := toFloat(args[0])\n    lo := toFloat(args[1])\n    hi := toFloat(args[2])\n    if x < lo { return vm.FloatVal(lo), nil }\n    if x > hi { return vm.FloatVal(hi), nil }\n    return vm.FloatVal(x), nil\n}\n```\n\n---\n\n## 5) Time + Random + Conversion Stdlib (8 functions)\n\nThese go in a new file `pkg/stdlib/time_ops.go` (time and random\nfunctions) and updates to `pkg/stdlib/core.go` (conversions).\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// Time (time_ops.go)\nr.Register(\"time_now_ms\", TimeNowMs)\nr.Register(\"sleep_ms\", SleepMs)\n\n// Random (time_ops.go)\nr.Register(\"random_seed\", RandomSeed)\nr.Register(\"random_shuffle\", RandomShuffle)\nr.Register(\"random_choice\", RandomChoice)\n\n// Conversions (core.go)\nr.Register(\"bool_to_string\", BoolToString)\nr.Register(\"char_to_int\", CharToInt)\nr.Register(\"int_to_char\", IntToChar)\n```\n\n### 5.1) time_now_ms\n\n```\nSignature:  time_now_ms() -> Int\nArguments:  0\nReturns:    Current Unix time in milliseconds (Int)\n```\n\n```go\nfunc TimeNowMs(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 0 {\n        return vm.UnitVal(), fmt.Errorf(\"time_now_ms: expected 0 args, got %d\", len(args))\n    }\n    ms := time.Now().UnixMilli()\n    return vm.IntVal(ms), nil\n}\n```\n\n### 5.2) sleep_ms\n\n```\nSignature:  sleep_ms(ms: Int) -> Unit\nArguments:  1 (milliseconds to sleep, must be non-negative)\nReturns:    Unit\nErrors:     Runtime error if ms < 0\nNote:       This was mandated by the original spec but never implemented.\n```\n\n```go\nfunc SleepMs(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"sleep_ms: expected 1 arg, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"sleep_ms: argument must be Int\")\n    }\n    ms := args[0].AsInt()\n    if ms < 0 {\n        return vm.UnitVal(), fmt.Errorf(\"sleep_ms: duration must be non-negative, got %d\", ms)\n    }\n    time.Sleep(time.Duration(ms) * time.Millisecond)\n    return vm.UnitVal(), nil\n}\n```\n\n### 5.3) random_seed\n\n```\nSignature:  random_seed(seed: Int) -> Unit\nArguments:  1 (seed value)\nReturns:    Unit\nNote:       Seeds the global PRNG used by random_int, random_float,\n            random_shuffle, random_choice.  Uses a package-level\n            *rand.Rand initialized with the seed.\n```\n\n```go\nvar rng *rand.Rand\nvar rngMu sync.Mutex\n\nfunc init() {\n    rng = rand.New(rand.NewSource(time.Now().UnixNano()))\n}\n\nfunc RandomSeed(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"random_seed: expected 1 arg, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"random_seed: argument must be Int\")\n    }\n    seed := args[0].AsInt()\n    rngMu.Lock()\n    rng = rand.New(rand.NewSource(seed))\n    rngMu.Unlock()\n    return vm.UnitVal(), nil\n}\n```\n\n**Important:** The existing `RandomInt` and `RandomFloat` in\n`math_ops.go` should be updated to use this shared `rng` instead of\n`math/rand` global state so that `random_seed` controls all random\noutput.  If the existing functions use `rand.Intn()` directly (global),\nrefactor them to use the shared `rng`.\n\n### 5.4) random_shuffle\n\n```\nSignature:  random_shuffle(arr: [Any]) -> [Any]\nArguments:  1 (array)\nReturns:    A NEW array with elements in random order (Fisher-Yates shuffle)\n            Original array is NOT modified.\n```\n\n```go\nfunc RandomShuffle(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"random_shuffle: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"random_shuffle: %w\", err)\n    }\n    // Copy elements\n    shuffled := make([]vm.Value, len(a.Elements))\n    copy(shuffled, a.Elements)\n    // Fisher-Yates shuffle\n    rngMu.Lock()\n    for i := len(shuffled) - 1; i > 0; i-- {\n        j := rng.Intn(i + 1)\n        shuffled[i], shuffled[j] = shuffled[j], shuffled[i]\n    }\n    rngMu.Unlock()\n    idx := heap.AllocArray(shuffled)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 5.5) random_choice\n\n```\nSignature:  random_choice(arr: [Any]) -> Any\nArguments:  1 (non-empty array)\nReturns:    A randomly selected element from the array\nErrors:     Runtime error if array is empty\n```\n\n```go\nfunc RandomChoice(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"random_choice: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"random_choice: %w\", err)\n    }\n    if len(a.Elements) == 0 {\n        return vm.UnitVal(), fmt.Errorf(\"random_choice: array is empty\")\n    }\n    rngMu.Lock()\n    idx := rng.Intn(len(a.Elements))\n    rngMu.Unlock()\n    return a.Elements[idx], nil\n}\n```\n\n### 5.6) bool_to_string\n\n```\nSignature:  bool_to_string(b: Bool) -> String\nArguments:  1 (Bool)\nReturns:    \"true\" or \"false\" as a heap-allocated String\nErrors:     Runtime error if argument is not Bool\n```\n\n```go\nfunc BoolToString(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"bool_to_string: expected 1 arg, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagBool {\n        return vm.UnitVal(), fmt.Errorf(\"bool_to_string: argument must be Bool\")\n    }\n    var s string\n    if args[0].AsBool() {\n        s = \"true\"\n    } else {\n        s = \"false\"\n    }\n    idx := heap.AllocString(s)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 5.7) char_to_int\n\n```\nSignature:  char_to_int(c: Char) -> Int\nArguments:  1 (Char)\nReturns:    Unicode codepoint as Int (e.g., 'A' \u2192 65)\nErrors:     Runtime error if argument is not Char\n```\n\n```go\nfunc CharToInt(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"char_to_int: expected 1 arg, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagChar {\n        return vm.UnitVal(), fmt.Errorf(\"char_to_int: argument must be Char\")\n    }\n    return vm.IntVal(int64(args[0].AsChar())), nil\n}\n```\n\n### 5.8) int_to_char\n\n```\nSignature:  int_to_char(n: Int) -> Char\nArguments:  1 (Int)\nReturns:    Character with Unicode codepoint n (e.g., 65 \u2192 'A')\nErrors:     Runtime error if argument is not Int\n            Runtime error if n < 0 or n > 0x10FFFF (invalid codepoint)\n            Runtime error if n is a surrogate (0xD800-0xDFFF)\n```\n\n```go\nfunc IntToChar(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"int_to_char: expected 1 arg, got %d\", len(args))\n    }\n    if args[0].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"int_to_char: argument must be Int\")\n    }\n    n := args[0].AsInt()\n    if n < 0 || n > 0x10FFFF {\n        return vm.UnitVal(), fmt.Errorf(\"int_to_char: codepoint %d out of range [0, 0x10FFFF]\", n)\n    }\n    r := rune(n)\n    if !utf8.ValidRune(r) {\n        return vm.UnitVal(), fmt.Errorf(\"int_to_char: codepoint %d is not a valid Unicode scalar value\", n)\n    }\n    return vm.CharVal(r), nil\n}\n```\n\n---\n\n## 6) Array Stdlib Expansion (12 functions)\n\nAll go in `pkg/stdlib/array_ops.go`.\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// Additional array operations (array_ops.go)\nr.Register(\"array_find\", ArrayFind)\nr.Register(\"array_any\", ArrayAny)\nr.Register(\"array_all\", ArrayAll)\nr.Register(\"array_sum\", ArraySum)\nr.Register(\"array_min\", ArrayMin)\nr.Register(\"array_max\", ArrayMax)\nr.Register(\"array_take\", ArrayTake)\nr.Register(\"array_drop\", ArrayDrop)\nr.Register(\"array_chunk\", ArrayChunk)\nr.Register(\"array_unique\", ArrayUnique)\nr.Register(\"array_join\", ArrayJoin)\nr.Register(\"array_slice\", ArraySlice)\n```\n\n### 6.1) array_find\n\n```\nSignature:  array_find(arr: [T], predicate: (T) -> Bool) -> Result<T, String>\nArguments:  2 (array, predicate function)\nReturns:    Result \u2014 Ok(first element where predicate is true)\n                     Err(\"not found\") if no element matches\nUses:       CallbackInvoker\n```\n\n```go\nfunc ArrayFind(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_find: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_find: %w\", err)\n    }\n    fn := args[1]\n    if CallbackInvoker == nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_find: no callback invoker registered\")\n    }\n    for _, elem := range a.Elements {\n        result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)\n        if callErr != nil {\n            return vm.UnitVal(), fmt.Errorf(\"array_find: callback error: %w\", callErr)\n        }\n        if result.IsTruthy() {\n            return makeResultOk(elem, heap), nil\n        }\n    }\n    return makeResultErr(\"not found\", heap), nil\n}\n```\n\n### 6.2) array_any\n\n```\nSignature:  array_any(arr: [T], predicate: (T) -> Bool) -> Bool\nArguments:  2 (array, predicate)\nReturns:    true if ANY element satisfies predicate, false otherwise\n            Empty array \u2192 false (vacuously)\nUses:       CallbackInvoker\n```\n\n```go\nfunc ArrayAny(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_any: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_any: %w\", err)\n    }\n    fn := args[1]\n    if CallbackInvoker == nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_any: no callback invoker registered\")\n    }\n    for _, elem := range a.Elements {\n        result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)\n        if callErr != nil {\n            return vm.UnitVal(), fmt.Errorf(\"array_any: callback error: %w\", callErr)\n        }\n        if result.IsTruthy() {\n            return vm.BoolVal(true), nil\n        }\n    }\n    return vm.BoolVal(false), nil\n}\n```\n\n### 6.3) array_all\n\n```\nSignature:  array_all(arr: [T], predicate: (T) -> Bool) -> Bool\nArguments:  2 (array, predicate)\nReturns:    true if ALL elements satisfy predicate, false otherwise\n            Empty array \u2192 true (vacuously)\nUses:       CallbackInvoker\n```\n\n```go\nfunc ArrayAll(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_all: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_all: %w\", err)\n    }\n    fn := args[1]\n    if CallbackInvoker == nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_all: no callback invoker registered\")\n    }\n    for _, elem := range a.Elements {\n        result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)\n        if callErr != nil {\n            return vm.UnitVal(), fmt.Errorf(\"array_all: callback error: %w\", callErr)\n        }\n        if !result.IsTruthy() {\n            return vm.BoolVal(false), nil\n        }\n    }\n    return vm.BoolVal(true), nil\n}\n```\n\n### 6.4) array_sum\n\n```\nSignature:  array_sum(arr: [Int|Float]) -> Int|Float\nArguments:  1 (array of numeric values)\nReturns:    Sum of all elements.\n            If all elements are Int, returns Int.\n            If any element is Float, returns Float.\n            Empty array \u2192 IntVal(0)\nErrors:     Runtime error if array contains non-numeric values\n```\n\n```go\nfunc ArraySum(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"array_sum: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_sum: %w\", err)\n    }\n    if len(a.Elements) == 0 {\n        return vm.IntVal(0), nil\n    }\n    hasFloat := false\n    for _, e := range a.Elements {\n        if e.Tag == vm.TagFloat {\n            hasFloat = true\n        } else if e.Tag != vm.TagInt {\n            return vm.UnitVal(), fmt.Errorf(\"array_sum: non-numeric element with tag=%d\", e.Tag)\n        }\n    }\n    if hasFloat {\n        sum := 0.0\n        for _, e := range a.Elements {\n            sum += toFloat(e)\n        }\n        return vm.FloatVal(sum), nil\n    }\n    var sum int64\n    for _, e := range a.Elements {\n        sum += e.AsInt()\n    }\n    return vm.IntVal(sum), nil\n}\n```\n\n### 6.5) array_min\n\n```\nSignature:  array_min(arr: [Int|Float]) -> Int|Float\nArguments:  1 (non-empty array of numeric values)\nReturns:    Minimum element (preserves type if all same type)\nErrors:     Runtime error if array is empty\n            Runtime error if array contains non-numeric values\n```\n\n```go\nfunc ArrayMin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"array_min: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_min: %w\", err)\n    }\n    if len(a.Elements) == 0 {\n        return vm.UnitVal(), fmt.Errorf(\"array_min: array is empty\")\n    }\n    minVal := a.Elements[0]\n    for _, e := range a.Elements[1:] {\n        if compareValues(e, minVal, heap) < 0 {\n            minVal = e\n        }\n    }\n    return minVal, nil\n}\n```\n\n### 6.6) array_max\n\n```\nSignature:  array_max(arr: [Int|Float]) -> Int|Float\nArguments:  1 (non-empty array of numeric values)\nReturns:    Maximum element\nErrors:     Runtime error if array is empty\n            Runtime error if array contains non-numeric values\n```\n\n```go\nfunc ArrayMax(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"array_max: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_max: %w\", err)\n    }\n    if len(a.Elements) == 0 {\n        return vm.UnitVal(), fmt.Errorf(\"array_max: array is empty\")\n    }\n    maxVal := a.Elements[0]\n    for _, e := range a.Elements[1:] {\n        if compareValues(e, maxVal, heap) > 0 {\n            maxVal = e\n        }\n    }\n    return maxVal, nil\n}\n```\n\n### 6.7) array_take\n\n```\nSignature:  array_take(arr: [T], n: Int) -> [T]\nArguments:  2 (array, count)\nReturns:    New array with first min(n, len(arr)) elements\n            If n <= 0, returns empty array\n            If n >= len(arr), returns copy of entire array\n```\n\n```go\nfunc ArrayTake(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_take: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_take: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"array_take: second argument must be Int\")\n    }\n    n := int(args[1].AsInt())\n    if n <= 0 {\n        idx := heap.AllocArray([]vm.Value{})\n        return vm.ObjVal(idx), nil\n    }\n    if n > len(a.Elements) {\n        n = len(a.Elements)\n    }\n    taken := make([]vm.Value, n)\n    copy(taken, a.Elements[:n])\n    idx := heap.AllocArray(taken)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 6.8) array_drop\n\n```\nSignature:  array_drop(arr: [T], n: Int) -> [T]\nArguments:  2 (array, count)\nReturns:    New array with first n elements removed\n            If n <= 0, returns copy of entire array\n            If n >= len(arr), returns empty array\n```\n\n```go\nfunc ArrayDrop(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_drop: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_drop: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"array_drop: second argument must be Int\")\n    }\n    n := int(args[1].AsInt())\n    if n <= 0 {\n        n = 0\n    }\n    if n >= len(a.Elements) {\n        idx := heap.AllocArray([]vm.Value{})\n        return vm.ObjVal(idx), nil\n    }\n    dropped := make([]vm.Value, len(a.Elements)-n)\n    copy(dropped, a.Elements[n:])\n    idx := heap.AllocArray(dropped)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 6.9) array_chunk\n\n```\nSignature:  array_chunk(arr: [T], size: Int) -> [[T]]\nArguments:  2 (array, chunk size)\nReturns:    Array of arrays, each with at most `size` elements.\n            Last chunk may be smaller.\nErrors:     Runtime error if size <= 0\n            Empty array \u2192 [[]] (array containing empty array) \u2014 no,\n            actually empty array \u2192 [] (empty result array)\n```\n\n```go\nfunc ArrayChunk(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_chunk: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_chunk: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"array_chunk: second argument must be Int\")\n    }\n    size := int(args[1].AsInt())\n    if size <= 0 {\n        return vm.UnitVal(), fmt.Errorf(\"array_chunk: chunk size must be positive, got %d\", size)\n    }\n    if len(a.Elements) == 0 {\n        idx := heap.AllocArray([]vm.Value{})\n        return vm.ObjVal(idx), nil\n    }\n    var chunks []vm.Value\n    for i := 0; i < len(a.Elements); i += size {\n        end := i + size\n        if end > len(a.Elements) {\n            end = len(a.Elements)\n        }\n        chunk := make([]vm.Value, end-i)\n        copy(chunk, a.Elements[i:end])\n        chunkIdx := heap.AllocArray(chunk)\n        chunks = append(chunks, vm.ObjVal(chunkIdx))\n    }\n    idx := heap.AllocArray(chunks)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 6.10) array_unique\n\n```\nSignature:  array_unique(arr: [T]) -> [T]\nArguments:  1 (array)\nReturns:    New array with duplicates removed (first occurrence kept).\n            Order is preserved.\n            Uses Value.Equal() for equality comparison.\n```\n\n```go\nfunc ArrayUnique(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"array_unique: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_unique: %w\", err)\n    }\n    var unique []vm.Value\n    for _, elem := range a.Elements {\n        found := false\n        for _, u := range unique {\n            if elem.Equal(u, heap) {\n                found = true\n                break\n            }\n        }\n        if !found {\n            unique = append(unique, elem)\n        }\n    }\n    idx := heap.AllocArray(unique)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 6.11) array_join\n\n```\nSignature:  array_join(arr: [String], separator: String) -> String\nArguments:  2 (array of strings, separator string)\nReturns:    Single string with all elements joined by separator\nErrors:     Runtime error if array elements are not strings\n            Empty array \u2192 \"\" (empty string)\n```\n\n```go\nfunc ArrayJoin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"array_join: expected 2 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_join: %w\", err)\n    }\n    sep, err := resolveString(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_join: separator: %w\", err)\n    }\n    parts := make([]string, len(a.Elements))\n    for i, elem := range a.Elements {\n        s, err := resolveString(elem, heap)\n        if err != nil {\n            return vm.UnitVal(), fmt.Errorf(\"array_join: element %d: %w\", i, err)\n        }\n        parts[i] = s\n    }\n    result := strings.Join(parts, sep)\n    idx := heap.AllocString(result)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 6.12) array_slice\n\n```\nSignature:  array_slice(arr: [T], start: Int, end: Int) -> [T]\nArguments:  3 (array, start index, end index \u2014 end is exclusive)\nReturns:    New array containing elements from start to end-1\n            Indices are clamped to valid range (no error on out-of-bounds)\n            Start and end can be negative (count from end):\n              -1 = last element, -2 = second to last, etc.\n```\n\n```go\nfunc ArraySlice(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 3 {\n        return vm.UnitVal(), fmt.Errorf(\"array_slice: expected 3 args, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"array_slice: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt || args[2].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"array_slice: indices must be Int\")\n    }\n    n := len(a.Elements)\n    start := int(args[1].AsInt())\n    end := int(args[2].AsInt())\n\n    // Negative index handling\n    if start < 0 { start = n + start }\n    if end < 0 { end = n + end }\n\n    // Clamp\n    if start < 0 { start = 0 }\n    if end > n { end = n }\n    if start >= end {\n        idx := heap.AllocArray([]vm.Value{})\n        return vm.ObjVal(idx), nil\n    }\n\n    sliced := make([]vm.Value, end-start)\n    copy(sliced, a.Elements[start:end])\n    idx := heap.AllocArray(sliced)\n    return vm.ObjVal(idx), nil\n}\n```\n\n---\n\n## 7) String Stdlib Expansion (6 functions)\n\nAll go in `pkg/stdlib/string_ops.go`.\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// Additional string operations (string_ops.go)\nr.Register(\"string_index_of\", StringIndexOf)\nr.Register(\"string_repeat\", StringRepeat)\nr.Register(\"string_pad_left\", StringPadLeft)\nr.Register(\"string_pad_right\", StringPadRight)\nr.Register(\"string_bytes\", StringBytes)\nr.Register(\"string_join\", StringJoin)\n```\n\n### 7.1) string_index_of\n\n```\nSignature:  string_index_of(haystack: String, needle: String) -> Int\nArguments:  2\nReturns:    Index (in Unicode codepoints, not bytes) of first occurrence\n            of needle in haystack.\n            Returns -1 if not found.\n```\n\n```go\nfunc StringIndexOf(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"string_index_of: expected 2 args, got %d\", len(args))\n    }\n    haystack, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_index_of: %w\", err)\n    }\n    needle, err := resolveString(args[1], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_index_of: %w\", err)\n    }\n\n    // Find byte index first\n    byteIdx := strings.Index(haystack, needle)\n    if byteIdx < 0 {\n        return vm.IntVal(-1), nil\n    }\n    // Convert byte index to codepoint index\n    cpIdx := utf8.RuneCountInString(haystack[:byteIdx])\n    return vm.IntVal(int64(cpIdx)), nil\n}\n```\n\n**Edge cases:**\n- `string_index_of(\"hello\", \"\")` \u2192 0 (empty string found at start)\n- `string_index_of(\"\", \"x\")` \u2192 -1\n- `string_index_of(\"caf\u00e9\", \"\u00e9\")` \u2192 3 (codepoint index, not byte index)\n\n### 7.2) string_repeat\n\n```\nSignature:  string_repeat(s: String, n: Int) -> String\nArguments:  2 (string, repeat count)\nReturns:    String repeated n times\nErrors:     Runtime error if n < 0\n            n = 0 \u2192 \"\" (empty string)\n```\n\n```go\nfunc StringRepeat(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 2 {\n        return vm.UnitVal(), fmt.Errorf(\"string_repeat: expected 2 args, got %d\", len(args))\n    }\n    s, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_repeat: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"string_repeat: second argument must be Int\")\n    }\n    n := int(args[1].AsInt())\n    if n < 0 {\n        return vm.UnitVal(), fmt.Errorf(\"string_repeat: count must be non-negative, got %d\", n)\n    }\n    result := strings.Repeat(s, n)\n    idx := heap.AllocString(result)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 7.3) string_pad_left\n\n```\nSignature:  string_pad_left(s: String, width: Int, pad_char: Char) -> String\nArguments:  3 (string, target width in codepoints, padding character)\nReturns:    String padded on the left to reach width.\n            If string is already >= width, returns original string unchanged.\n```\n\n```go\nfunc StringPadLeft(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 3 {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_left: expected 3 args, got %d\", len(args))\n    }\n    s, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_left: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_left: width must be Int\")\n    }\n    if args[2].Tag != vm.TagChar {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_left: pad_char must be Char\")\n    }\n    width := int(args[1].AsInt())\n    padChar := args[2].AsChar()\n    runeLen := utf8.RuneCountInString(s)\n    if runeLen >= width {\n        return args[0], nil  // return original string (no allocation)\n    }\n    padding := strings.Repeat(string(padChar), width-runeLen)\n    result := padding + s\n    idx := heap.AllocString(result)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 7.4) string_pad_right\n\n```\nSignature:  string_pad_right(s: String, width: Int, pad_char: Char) -> String\nArguments:  3 (string, target width in codepoints, padding character)\nReturns:    String padded on the right to reach width.\n            If string is already >= width, returns original string unchanged.\n```\n\n```go\nfunc StringPadRight(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 3 {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_right: expected 3 args, got %d\", len(args))\n    }\n    s, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_right: %w\", err)\n    }\n    if args[1].Tag != vm.TagInt {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_right: width must be Int\")\n    }\n    if args[2].Tag != vm.TagChar {\n        return vm.UnitVal(), fmt.Errorf(\"string_pad_right: pad_char must be Char\")\n    }\n    width := int(args[1].AsInt())\n    padChar := args[2].AsChar()\n    runeLen := utf8.RuneCountInString(s)\n    if runeLen >= width {\n        return args[0], nil\n    }\n    padding := strings.Repeat(string(padChar), width-runeLen)\n    result := s + padding\n    idx := heap.AllocString(result)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 7.5) string_bytes\n\n```\nSignature:  string_bytes(s: String) -> [Int]\nArguments:  1 (string)\nReturns:    Array of byte values (each 0-255) of the UTF-8 encoding\n```\n\n```go\nfunc StringBytes(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"string_bytes: expected 1 arg, got %d\", len(args))\n    }\n    s, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"string_bytes: %w\", err)\n    }\n    bytes := []byte(s)\n    elems := make([]vm.Value, len(bytes))\n    for i, b := range bytes {\n        elems[i] = vm.IntVal(int64(b))\n    }\n    idx := heap.AllocArray(elems)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 7.6) string_join\n\n```\nSignature:  string_join(parts: [String], separator: String) -> String\nArguments:  2 (array of strings, separator)\nReturns:    Single string with all parts joined by separator\nNote:       This is an alias / alternative name for array_join with\n            reversed argument order for discoverability.\n            Actually \u2014 keep the same argument order as array_join:\n            string_join(parts, sep).\n```\n\n```go\nfunc StringJoin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    // Delegate to ArrayJoin \u2014 same signature and behavior\n    return ArrayJoin(args, heap)\n}\n```\n\n---\n\n## 8) File System Stdlib Expansion (8 functions)\n\nAll go in `pkg/stdlib/io.go`.\n\n### Registration\n\nAdd to `RegisterAll` in `core.go`:\n\n```go\n// File system operations (io.go)\nr.Register(\"file_exists\", FileExists)\nr.Register(\"dir_list\", DirList)\nr.Register(\"dir_create\", DirCreate)\nr.Register(\"path_join\", PathJoin)\nr.Register(\"path_dirname\", PathDirname)\nr.Register(\"path_basename\", PathBasename)\nr.Register(\"path_extension\", PathExtension)\nr.Register(\"file_size\", FileSize)\n```\n\n### 8.1) file_exists\n\n```\nSignature:  file_exists(path: String) -> Bool\nArguments:  1 (file path)\nReturns:    true if path exists (file or directory), false otherwise\n            Does NOT distinguish between files and directories.\n```\n\n```go\nfunc FileExists(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"file_exists: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"file_exists: %w\", err)\n    }\n    _, statErr := os.Stat(path)\n    return vm.BoolVal(statErr == nil), nil\n}\n```\n\n### 8.2) dir_list\n\n```\nSignature:  dir_list(path: String) -> Result<[String], String>\nArguments:  1 (directory path)\nReturns:    Result \u2014 Ok(array of entry names) or Err(error message)\n            Entries include both files and subdirectories.\n            Returns names only (not full paths).\n```\n\n```go\nfunc DirList(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"dir_list: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"dir_list: %w\", err)\n    }\n    entries, readErr := os.ReadDir(path)\n    if readErr != nil {\n        return makeResultErr(readErr.Error(), heap), nil\n    }\n    names := make([]vm.Value, len(entries))\n    for i, e := range entries {\n        idx := heap.AllocString(e.Name())\n        names[i] = vm.ObjVal(idx)\n    }\n    arrIdx := heap.AllocArray(names)\n    return makeResultOk(vm.ObjVal(arrIdx), heap), nil\n}\n```\n\n### 8.3) dir_create\n\n```\nSignature:  dir_create(path: String) -> Result<Unit, String>\nArguments:  1 (directory path)\nReturns:    Result \u2014 Ok(Unit) or Err(error message)\n            Creates all intermediate directories (like mkdir -p).\n```\n\n```go\nfunc DirCreate(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"dir_create: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"dir_create: %w\", err)\n    }\n    mkErr := os.MkdirAll(path, 0755)\n    if mkErr != nil {\n        return makeResultErr(mkErr.Error(), heap), nil\n    }\n    return makeResultOk(vm.UnitVal(), heap), nil\n}\n```\n\n### 8.4) path_join\n\n```\nSignature:  path_join(parts: [String]) -> String\nArguments:  1 (array of path components)\nReturns:    Joined path using OS-appropriate separator\n```\n\n```go\nfunc PathJoin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"path_join: expected 1 arg, got %d\", len(args))\n    }\n    a, err := resolveArray(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"path_join: %w\", err)\n    }\n    parts := make([]string, len(a.Elements))\n    for i, elem := range a.Elements {\n        s, err := resolveString(elem, heap)\n        if err != nil {\n            return vm.UnitVal(), fmt.Errorf(\"path_join: element %d: %w\", i, err)\n        }\n        parts[i] = s\n    }\n    result := filepath.Join(parts...)\n    idx := heap.AllocString(result)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 8.5) path_dirname\n\n```\nSignature:  path_dirname(path: String) -> String\nArguments:  1 (file path)\nReturns:    Directory component of path\n            path_dirname(\"/usr/local/bin/ryx\") \u2192 \"/usr/local/bin\"\n            path_dirname(\"file.txt\") \u2192 \".\"\n```\n\n```go\nfunc PathDirname(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"path_dirname: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"path_dirname: %w\", err)\n    }\n    dir := filepath.Dir(path)\n    idx := heap.AllocString(dir)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 8.6) path_basename\n\n```\nSignature:  path_basename(path: String) -> String\nArguments:  1 (file path)\nReturns:    Final component of path (file name with extension)\n            path_basename(\"/usr/local/bin/ryx\") \u2192 \"ryx\"\n            path_basename(\"/tmp/data.csv\") \u2192 \"data.csv\"\n```\n\n```go\nfunc PathBasename(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"path_basename: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"path_basename: %w\", err)\n    }\n    base := filepath.Base(path)\n    idx := heap.AllocString(base)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 8.7) path_extension\n\n```\nSignature:  path_extension(path: String) -> String\nArguments:  1 (file path)\nReturns:    Extension including the dot, or empty string if none\n            path_extension(\"data.csv\") \u2192 \".csv\"\n            path_extension(\"Makefile\") \u2192 \"\"\n            path_extension(\"archive.tar.gz\") \u2192 \".gz\"\n```\n\n```go\nfunc PathExtension(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"path_extension: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"path_extension: %w\", err)\n    }\n    ext := filepath.Ext(path)\n    idx := heap.AllocString(ext)\n    return vm.ObjVal(idx), nil\n}\n```\n\n### 8.8) file_size\n\n```\nSignature:  file_size(path: String) -> Result<Int, String>\nArguments:  1 (file path)\nReturns:    Result \u2014 Ok(size in bytes) or Err(error message)\n```\n\n```go\nfunc FileSize(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\n    if len(args) != 1 {\n        return vm.UnitVal(), fmt.Errorf(\"file_size: expected 1 arg, got %d\", len(args))\n    }\n    path, err := resolveString(args[0], heap)\n    if err != nil {\n        return vm.UnitVal(), fmt.Errorf(\"file_size: %w\", err)\n    }\n    info, statErr := os.Stat(path)\n    if statErr != nil {\n        return makeResultErr(statErr.Error(), heap), nil\n    }\n    return makeResultOk(vm.IntVal(info.Size()), heap), nil\n}\n```\n\n---\n\n## 9) Test Expectations\n\n### 9.1) Unit Tests \u2014 Map Operations\n\nFile: `pkg/stdlib/map_ops_test.go` (new)\n\n```go\nfunc TestMapNewAndLen(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    result, _ := MapLen([]vm.Value{m}, heap)\n    assert(result.AsInt() == 0)\n}\n\nfunc TestMapSetAndGet(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n\n    // Set string key \u2192 int value\n    keyIdx := heap.AllocString(\"alice\")\n    m, _ = MapSet([]vm.Value{m, vm.ObjVal(keyIdx), vm.IntVal(42)}, heap)\n\n    // Get it back\n    result, _ := MapGet([]vm.Value{m, vm.ObjVal(keyIdx)}, heap)\n    assert(result.AsInt() == 42)\n\n    // Len should be 1\n    lenResult, _ := MapLen([]vm.Value{m}, heap)\n    assert(lenResult.AsInt() == 1)\n}\n\nfunc TestMapContainsAndDelete(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    keyIdx := heap.AllocString(\"key\")\n    key := vm.ObjVal(keyIdx)\n\n    // Not found initially\n    found, _ := MapContains([]vm.Value{m, key}, heap)\n    assert(found.AsBool() == false)\n\n    // Set and check\n    m, _ = MapSet([]vm.Value{m, key, vm.IntVal(1)}, heap)\n    found, _ = MapContains([]vm.Value{m, key}, heap)\n    assert(found.AsBool() == true)\n\n    // Delete and check\n    m, _ = MapDelete([]vm.Value{m, key}, heap)\n    found, _ = MapContains([]vm.Value{m, key}, heap)\n    assert(found.AsBool() == false)\n}\n\nfunc TestMapGetMissing(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    keyIdx := heap.AllocString(\"missing\")\n    _, err := MapGet([]vm.Value{m, vm.ObjVal(keyIdx)}, heap)\n    assert(err != nil) // should error\n    assert(strings.Contains(err.Error(), \"key not found\"))\n}\n\nfunc TestMapIntKeys(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    m, _ = MapSet([]vm.Value{m, vm.IntVal(1), vm.IntVal(100)}, heap)\n    m, _ = MapSet([]vm.Value{m, vm.IntVal(2), vm.IntVal(200)}, heap)\n    result, _ := MapGet([]vm.Value{m, vm.IntVal(1)}, heap)\n    assert(result.AsInt() == 100)\n}\n\nfunc TestMapOverwrite(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    keyIdx := heap.AllocString(\"x\")\n    key := vm.ObjVal(keyIdx)\n    m, _ = MapSet([]vm.Value{m, key, vm.IntVal(1)}, heap)\n    m, _ = MapSet([]vm.Value{m, key, vm.IntVal(2)}, heap)\n    result, _ := MapGet([]vm.Value{m, key}, heap)\n    assert(result.AsInt() == 2)\n    lenResult, _ := MapLen([]vm.Value{m}, heap)\n    assert(lenResult.AsInt() == 1) // not 2\n}\n\nfunc TestMapKeysAndValues(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    m, _ = MapSet([]vm.Value{m, vm.IntVal(1), vm.IntVal(10)}, heap)\n    m, _ = MapSet([]vm.Value{m, vm.IntVal(2), vm.IntVal(20)}, heap)\n\n    keysResult, _ := MapKeys([]vm.Value{m}, heap)\n    keysArr := heap.Get(keysResult.AsObj()).Data.(*vm.ArrayObj)\n    assert(len(keysArr.Elements) == 2)\n\n    valsResult, _ := MapValues([]vm.Value{m}, heap)\n    valsArr := heap.Get(valsResult.AsObj()).Data.(*vm.ArrayObj)\n    assert(len(valsArr.Elements) == 2)\n}\n\nfunc TestMapMerge(t *testing.T) {\n    heap := vm.NewHeap()\n    m1, _ := MapNew(nil, heap)\n    m2, _ := MapNew(nil, heap)\n    k1 := heap.AllocString(\"a\")\n    k2 := heap.AllocString(\"b\")\n    k3 := heap.AllocString(\"a\") // same key as k1\n\n    m1, _ = MapSet([]vm.Value{m1, vm.ObjVal(k1), vm.IntVal(1)}, heap)\n    m2, _ = MapSet([]vm.Value{m2, vm.ObjVal(k2), vm.IntVal(2)}, heap)\n    m2, _ = MapSet([]vm.Value{m2, vm.ObjVal(k3), vm.IntVal(99)}, heap) // \"a\" \u2192 99\n\n    merged, _ := MapMerge([]vm.Value{m1, m2}, heap)\n    // \"a\" should be 99 (m2 wins), \"b\" should be 2\n    result, _ := MapGet([]vm.Value{merged, vm.ObjVal(k1)}, heap)\n    assert(result.AsInt() == 99)\n}\n\nfunc TestMapEntries(t *testing.T) {\n    heap := vm.NewHeap()\n    m, _ := MapNew(nil, heap)\n    m, _ = MapSet([]vm.Value{m, vm.IntVal(1), vm.IntVal(10)}, heap)\n\n    entries, _ := MapEntries([]vm.Value{m}, heap)\n    arr := heap.Get(entries.AsObj()).Data.(*vm.ArrayObj)\n    assert(len(arr.Elements) == 1)\n    // Each entry is a tuple (key, value)\n    tuple := heap.Get(arr.Elements[0].AsObj()).Data.(*vm.TupleObj)\n    assert(tuple.Elements[0].AsInt() == 1)\n    assert(tuple.Elements[1].AsInt() == 10)\n}\n```\n\n### 9.2) Unit Tests \u2014 Math Functions\n\nFile: `pkg/stdlib/math_ops_test.go` (new or extend existing)\n\n```\nsin(0.0)                     \u2192 0.0\nsin(pi() / 2.0)              \u2192 1.0  (within 1e-10 tolerance)\ncos(0.0)                     \u2192 1.0\ncos(pi())                    \u2192 -1.0  (within 1e-10)\ntan(0.0)                     \u2192 0.0\nasin(0.0)                    \u2192 0.0\nasin(1.0)                    \u2192 pi/2  (within 1e-10)\nacos(1.0)                    \u2192 0.0\natan(0.0)                    \u2192 0.0\natan2(1.0, 0.0)              \u2192 pi/2  (within 1e-10)\nlog(1.0)                     \u2192 0.0\nlog(math.E)                  \u2192 1.0  (within 1e-10)\nlog2(8.0)                    \u2192 3.0\nlog10(100.0)                 \u2192 2.0\nexp(0.0)                     \u2192 1.0\nexp(1.0)                     \u2192 math.E  (within 1e-10)\npi()                         \u2192 math.Pi\ne()                          \u2192 math.E\ngcd(12, 8)                   \u2192 4\ngcd(0, 5)                    \u2192 5\ngcd(7, 0)                    \u2192 7\ngcd(0, 0)                    \u2192 0\ngcd(-12, 8)                  \u2192 4\nlcm(4, 6)                    \u2192 12\nlcm(0, 5)                    \u2192 0\nclamp(5, 0, 10)              \u2192 5  (Int)\nclamp(-5, 0, 10)             \u2192 0  (Int)\nclamp(15, 0, 10)             \u2192 10 (Int)\nclamp(5.5, 0.0, 10.0)        \u2192 5.5 (Float)\n```\n\n### 9.3) Unit Tests \u2014 Array Expansion\n\n```\narray_sum([3,1,4,1,5])       \u2192 14  (Int)\narray_sum([1.0, 2.0, 3.0])   \u2192 6.0 (Float)\narray_sum([])                 \u2192 0   (Int)\narray_min([3,1,4,1,5])       \u2192 1\narray_max([3,1,4,1,5])       \u2192 5\narray_min([])                 \u2192 error \"array is empty\"\narray_any([1,2,3], |x| x>2)  \u2192 true\narray_any([1,2,3], |x| x>5)  \u2192 false\narray_any([], |x| true)      \u2192 false\narray_all([1,2,3], |x| x>0)  \u2192 true\narray_all([1,2,3], |x| x>1)  \u2192 false\narray_all([], |x| false)     \u2192 true\narray_take([1,2,3,4,5], 3)   \u2192 [1,2,3]\narray_take([1,2], 5)          \u2192 [1,2]\narray_take([1,2,3], 0)        \u2192 []\narray_drop([1,2,3,4,5], 2)   \u2192 [3,4,5]\narray_drop([1,2], 5)          \u2192 []\narray_chunk([1,2,3,4,5], 2)  \u2192 [[1,2],[3,4],[5]]\narray_chunk([], 3)            \u2192 []\narray_chunk([1,2,3], 0)       \u2192 error \"chunk size must be positive\"\narray_unique([3,1,4,1,5,3])  \u2192 [3,1,4,5]  (preserves first occurrence order)\narray_join([\"a\",\"b\",\"c\"],\"-\") \u2192 \"a-b-c\"\narray_join([], \",\")           \u2192 \"\"\narray_slice([1,2,3,4,5],1,4) \u2192 [2,3,4]\narray_slice([1,2,3], -2, 10) \u2192 [2,3]  (negative start, clamped end)\narray_find([1,2,3], |x| x>1) \u2192 Ok(2)  (first match)\narray_find([1,2,3], |x| x>5) \u2192 Err(\"not found\")\n```\n\n### 9.4) Unit Tests \u2014 String Expansion\n\n```\nstring_index_of(\"hello\", \"ll\")     \u2192 2\nstring_index_of(\"hello\", \"xyz\")    \u2192 -1\nstring_index_of(\"hello\", \"\")       \u2192 0\nstring_repeat(\"ab\", 3)             \u2192 \"ababab\"\nstring_repeat(\"x\", 0)              \u2192 \"\"\nstring_pad_left(\"42\", 5, '0')      \u2192 \"00042\"\nstring_pad_left(\"hello\", 3, '0')   \u2192 \"hello\"  (already >= width)\nstring_pad_right(\"hi\", 5, '.')     \u2192 \"hi...\"\nstring_bytes(\"ABC\")                \u2192 [65, 66, 67]\nstring_join([\"a\",\"b\",\"c\"], \"-\")     \u2192 \"a-b-c\"\n```\n\n### 9.5) Unit Tests \u2014 Time/Random/Conversion\n\n```\ntime_now_ms()                \u2192 positive Int (just check > 0)\nsleep_ms(0)                  \u2192 Unit (succeeds)\nsleep_ms(-1)                 \u2192 error \"duration must be non-negative\"\nrandom_seed(42) then random_int(0,100) \u2192 deterministic value\nrandom_shuffle([1,2,3])     \u2192 array of length 3 with same elements\nrandom_choice([10,20,30])   \u2192 one of {10, 20, 30}\nrandom_choice([])            \u2192 error \"array is empty\"\nbool_to_string(true)         \u2192 \"true\"\nbool_to_string(false)        \u2192 \"false\"\nchar_to_int('A')             \u2192 65\nchar_to_int('0')             \u2192 48\nint_to_char(65)              \u2192 'A'\nint_to_char(0x1F600)         \u2192 '\ud83d\ude00' (emoji)\nint_to_char(-1)              \u2192 error \"out of range\"\nint_to_char(0xD800)          \u2192 error \"not a valid Unicode scalar\"\n```\n\n### 9.6) Unit Tests \u2014 File System\n\n```\nfile_exists(\"/tmp\")                \u2192 true  (or some known path)\nfile_exists(\"/nonexistent/path\")   \u2192 false\ndir_create(\"/tmp/ryx_test_dir\")    \u2192 Ok(())\ndir_list(\"/tmp/ryx_test_dir\")      \u2192 Ok([])  (empty dir)\npath_join([\"usr\", \"local\", \"bin\"]) \u2192 \"usr/local/bin\"\npath_dirname(\"/usr/local/bin/ryx\") \u2192 \"/usr/local/bin\"\npath_basename(\"/tmp/data.csv\")     \u2192 \"data.csv\"\npath_extension(\"data.csv\")         \u2192 \".csv\"\npath_extension(\"Makefile\")         \u2192 \"\"\nfile_size (use a temp file)        \u2192 Ok(n) where n matches written bytes\n```\n\n### 9.7) Integration Test Programs\n\n#### `tests/testdata/programs/map_operations.ryx`\n```ryx\nfn main() {\n    let mut m = map_new();\n    m = map_set(m, \"alice\", 42);\n    m = map_set(m, \"bob\", 17);\n    m = map_set(m, \"carol\", 99);\n\n    println(map_len(m));\n    println(map_get(m, \"alice\"));\n    println(map_get(m, \"bob\"));\n    println(map_contains(m, \"carol\"));\n    println(map_contains(m, \"dave\"));\n\n    m = map_delete(m, \"bob\");\n    println(map_len(m));\n    println(map_contains(m, \"bob\"));\n\n    // Overwrite\n    m = map_set(m, \"alice\", 100);\n    println(map_get(m, \"alice\"));\n}\n```\n\n`tests/testdata/programs/map_operations.expected`:\n```\n3\n42\n17\ntrue\nfalse\n2\nfalse\n100\n```\n\n#### `tests/testdata/programs/word_counter.ryx`\n```ryx\nfn main() {\n    let words = string_split(\"the cat sat on the mat the cat\", \" \");\n    let mut counts = map_new();\n    let mut i = 0;\n    while i < array_len(words) {\n        let w = words[i];\n        if map_contains(counts, w) {\n            let c = map_get(counts, w);\n            counts = map_set(counts, w, c + 1);\n        } else {\n            counts = map_set(counts, w, 1);\n        };\n        i = i + 1;\n    };\n    println(map_len(counts));\n    println(map_get(counts, \"the\"));\n    println(map_get(counts, \"cat\"));\n    println(map_get(counts, \"sat\"));\n    println(map_get(counts, \"on\"));\n    println(map_get(counts, \"mat\"));\n}\n```\n\n`tests/testdata/programs/word_counter.expected`:\n```\n5\n3\n2\n1\n1\n1\n```\n\n#### `tests/testdata/programs/phone_book.ryx`\n```ryx\nfn main() {\n    let mut book = map_new();\n    book = map_set(book, \"Alice\", \"555-0100\");\n    book = map_set(book, \"Bob\", \"555-0200\");\n    book = map_set(book, \"Carol\", \"555-0300\");\n\n    // Lookup\n    println(map_get(book, \"Bob\"));\n\n    // Update\n    book = map_set(book, \"Bob\", \"555-9999\");\n    println(map_get(book, \"Bob\"));\n\n    // List all entries\n    println(map_len(book));\n\n    // Delete and verify\n    book = map_delete(book, \"Carol\");\n    println(map_contains(book, \"Carol\"));\n    println(map_len(book));\n}\n```\n\n`tests/testdata/programs/phone_book.expected`:\n```\n555-0200\n555-9999\n3\nfalse\n2\n```\n\n#### `tests/testdata/programs/group_by.ryx`\n```ryx\nfn main() {\n    // Group numbers by even/odd\n    let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];\n    let mut groups = map_new();\n    groups = map_set(groups, \"even\", []);\n    groups = map_set(groups, \"odd\", []);\n\n    let mut i = 0;\n    while i < array_len(nums) {\n        let n = nums[i];\n        if n % 2 == 0 {\n            let arr = map_get(groups, \"even\");\n            let arr2 = array_push(arr, n);\n            groups = map_set(groups, \"even\", arr2);\n        } else {\n            let arr = map_get(groups, \"odd\");\n            let arr2 = array_push(arr, n);\n            groups = map_set(groups, \"odd\", arr2);\n        };\n        i = i + 1;\n    };\n\n    let evens = map_get(groups, \"even\");\n    let odds = map_get(groups, \"odd\");\n    println(array_len(evens));\n    println(array_len(odds));\n    println(array_sum(evens));\n    println(array_sum(odds));\n}\n```\n\n`tests/testdata/programs/group_by.expected`:\n```\n5\n5\n30\n25\n```\n\n### 9.8) GC Stress Test for Maps\n\nFile: `pkg/gc/gc_test.go` (add test case)\n\n```go\nfunc TestMapGCStress(t *testing.T) {\n    h := NewHeap()\n    // Allocate many maps with string key/value pairs\n    // Keep only some reachable\n    // Run full GC\n    // Verify reachable maps survive, unreachable maps are collected\n    // Verify children (string keys/values) of reachable maps survive\n}\n```\n\nTest expectations:\n- Create 1000 maps with 10 entries each\n- Keep references to only 100 maps\n- After GC: exactly 100 maps survive\n- All keys and values of surviving maps are accessible\n- No dangling references\n\n---\n\n## 10) Files to Modify\n\n### New Files\n\n| File | Description |\n|------|-------------|\n| `pkg/stdlib/map_ops.go` | 12 map stdlib functions + resolveMap helper |\n| `pkg/stdlib/map_ops_test.go` | Unit tests for map operations |\n| `pkg/stdlib/time_ops.go` | time_now_ms, sleep_ms, random_seed, random_shuffle, random_choice |\n| `tests/testdata/programs/map_operations.ryx` | Integration test |\n| `tests/testdata/programs/map_operations.expected` | Expected output |\n| `tests/testdata/programs/word_counter.ryx` | Integration test |\n| `tests/testdata/programs/word_counter.expected` | Expected output |\n| `tests/testdata/programs/phone_book.ryx` | Integration test |\n| `tests/testdata/programs/phone_book.expected` | Expected output |\n| `tests/testdata/programs/group_by.ryx` | Integration test |\n| `tests/testdata/programs/group_by.expected` | Expected output |\n\n### Modified Files\n\n| File | Changes |\n|------|---------|\n| `pkg/vm/value.go` | Add `ObjMap` constant (0x27), `mapEntry` struct, `MapObj` struct, `ComputeHash()` function, `MapObj` methods (Get/Set/Delete/Contains/Keys/Values/Entries) |\n| `pkg/vm/heap.go` | Add `AllocMap()` method |\n| `pkg/vm/builtins.go` | Add `*MapObj` cases to `Equal()`, `StringValue()`/`displayValue()`, `deepClone()`, `hashValue()`, `deepCompare()` |\n| `pkg/gc/gc.go` | Add `KindMap` to `ObjectKind` enum |\n| `pkg/gc/write_barrier.go` | Add `BarrierMapSet()` convenience method |\n| `pkg/gc/gc_test.go` | Add map GC stress test |\n| `pkg/stdlib/core.go` | Add registrations for all new functions (map, math, time, random, conversion, array, string, filesystem) in `RegisterAll()` |\n| `pkg/stdlib/array_ops.go` | Add 12 new array functions: array_find, array_any, array_all, array_sum, array_min, array_max, array_take, array_drop, array_chunk, array_unique, array_join, array_slice |\n| `pkg/stdlib/string_ops.go` | Add 6 new string functions: string_index_of, string_repeat, string_pad_left, string_pad_right, string_bytes, string_join |\n| `pkg/stdlib/math_ops.go` | Add 16 new math functions: sin, cos, tan, asin, acos, atan, atan2, log, log2, log10, exp, pi, e, gcd, lcm, clamp |\n| `pkg/stdlib/io.go` | Add 8 new filesystem functions: file_exists, dir_list, dir_create, path_join, path_dirname, path_basename, path_extension, file_size |\n\n### VM Bridge (GC \u2194 VM Heap)\n\nThe file that bridges GC objects with VM heap objects (look for where\n`gc.KindChannel` is used \u2014 that's where `gc.KindMap` needs to be\nadded for tracing map children).  This is likely in `pkg/vm/vm.go` or\na dedicated `pkg/vm/gc_bridge.go` file.\n\n---\n\n## 11) Task Dependency Graph\n\n```\nWave 1 (all parallel, no dependencies):\n  T1: ObjMap core (value.go, heap.go, builtins.go)\n  T4: Math stdlib (math_ops.go)\n  T5: Time + Random + Conversions (time_ops.go, core.go)\n  T6: Array + String expansion (array_ops.go, string_ops.go)\n  T7: Filesystem expansion (io.go)\n\nWave 2 (depends on T1):\n  T2: GC integration (gc.go, write_barrier.go)\n  T3: Map stdlib functions (map_ops.go, core.go)\n\nWave 3 (depends on T1, T2, T3, T6):\n  T8: Integration tests + example programs (.ryx/.expected files)\n```\n\n**Critical path:** T1 \u2192 T3 \u2192 T8  (Map core \u2192 Map stdlib \u2192 Integration tests)\n\n**Maximum parallelism:** 5 tasks in Wave 1 can run simultaneously.\n\n---\n\n## 12) Verification\n\n```bash\n# Full test suite (should pass 753+ existing tests plus all new ones)\ngo test ./... -v\n\n# Per-package verification\ngo test ./pkg/vm/... -v          # Map heap type, value traits\ngo test ./pkg/gc/... -v          # GC integration, write barriers\ngo test ./pkg/stdlib/... -v      # All stdlib function tests\n\n# Integration tests (includes new .ryx programs)\ngo test ./tests/integration/... -v\n\n# Quick smoke test (run examples directly if binary exists)\ngo run . run tests/testdata/programs/map_operations.ryx\ngo run . run tests/testdata/programs/word_counter.ryx\ngo run . run tests/testdata/programs/phone_book.ryx\ngo run . run tests/testdata/programs/group_by.ryx\n```\n\n### Success Criteria\n\n1. All 753+ existing tests pass (zero regressions)\n2. Map unit tests pass: new, set/get, delete, contains, len, keys, values, entries, merge, filter, map\n3. Math unit tests pass: all 16 functions with edge cases\n4. Array unit tests pass: all 12 new functions\n5. String unit tests pass: all 6 new functions\n6. Time/Random/Conversion unit tests pass: all 8 functions\n7. Filesystem unit tests pass: all 8 functions\n8. GC stress test passes: maps are properly traced and collected\n9. All 4 integration test programs produce correct output\n10. `go vet ./...` reports no issues\n11. No data races under `-race` flag",
+  "run_id": "73d173c8",
+  "goal": "# Swarm Goal\n\nVex Programming Language \u2014 Compiler + Bytecode VM in Go\n\nBuild a complete compiler toolchain and virtual machine for **Vex**, a\nstatically-typed, expression-oriented programming language with algebraic\ndata types, pattern matching, closures, traits, and a concurrent runtime.\nImplemented in Go for compilation speed and goroutine-based concurrency.\nA full test suite validates every layer from lexing individual tokens up\nto whole-program semantic guarantees and VM execution correctness.\n\n---\n\n## 0) Language Overview\n\nVex is a small but complete language designed to exercise every major\ncompiler subsystem. It combines ML-family type safety with Rust-like\nownership-free ergonomics and Go-like concurrency primitives.\n\n### Sample Program\n```vex\ntype Tree<T> {\n    Leaf(T),\n    Node(Tree<T>, T, Tree<T>),\n}\n\ntrait Summable {\n    fn zero() -> Self;\n    fn add(self, other: Self) -> Self;\n}\n\nimpl Summable for Int {\n    fn zero() -> Int { 0 }\n    fn add(self, other: Int) -> Int { self + other }\n}\n\nfn sum_tree<T: Summable>(tree: Tree<T>) -> T {\n    match tree {\n        Leaf(val) => val,\n        Node(left, val, right) => {\n            let l = sum_tree(left);\n            let r = sum_tree(right);\n            l.add(val).add(r)\n        }\n    }\n}\n\nfn main() {\n    let tree = Node(\n        Node(Leaf(1), 2, Leaf(3)),\n        4,\n        Node(Leaf(5), 6, Leaf(7)),\n    );\n    let total = sum_tree(tree);\n    println(total);  // 28\n\n    // Closures\n    let adder = |x: Int| -> (Int -> Int) {\n        |y: Int| -> Int { x + y }\n    };\n    let add5 = adder(5);\n    println(add5(10));  // 15\n\n    // Concurrency\n    let ch = channel<Int>(10);\n    spawn {\n        for i in 0..100 {\n            ch.send(i * i);\n        }\n        ch.close();\n    };\n    let mut total = 0;\n    for val in ch {\n        total = total + val;\n    }\n    println(total);  // 328350\n\n    // Error handling\n    match parse_int(\"42\") {\n        Ok(n) => println(n),\n        Err(msg) => println(\"error: \" ++ msg),\n    }\n}\n```\n\n### Type System\n- Primitives: `Int` (64-bit signed), `Float` (64-bit IEEE 754),\n  `Bool`, `Char` (Unicode scalar), `String` (UTF-8, immutable),\n  `Unit` (zero-size, like `void`)\n- Algebraic data types (enums with associated data)\n- Structs (named product types)\n- Tuples: `(Int, String, Bool)`\n- Arrays: `[Int]` (fixed-size after creation)\n- Slices: `&[Int]` (view into array)\n- Functions: `(Int, Int) -> Bool`\n- Closures: same type as functions, capture by value\n- Generics: `<T>`, `<T: Trait>`, `<T: Trait1 + Trait2>`\n- `Option<T>` and `Result<T, E>` as built-in algebraic types\n- `Channel<T>` for concurrent communication\n- No null \u2014 `Option<T>` is the only way to represent absence\n- No implicit conversions between any types\n- Structural equality for all value types; reference equality opt-in\n\n### Expression-Oriented\nEverything is an expression:\n- `if/else` returns a value: `let x = if cond { 1 } else { 2 };`\n- `match` returns a value: `let y = match opt { Some(v) => v, None => 0 };`\n- Block expressions: last expression is the block's value\n- `for`/`while` return `Unit`\n\n### Ownership Model\nNo ownership/borrow checking. Values are either:\n- **Stack-allocated**: primitives, small structs (\u2264 64 bytes)\n- **Heap-allocated**: strings, arrays, closures, ADT variants with data,\n  anything captured by a closure\n\nHeap values are **garbage collected** (tricolor mark-sweep).\n\n---\n\n## 1) Lexer\n\nHand-written scanner producing a token stream. No regex, no generator.\n\n### Token Types (52)\n```\n// Literals\nINT_LIT         // 42, 0xFF, 0b1010, 0o77, 1_000_000\nFLOAT_LIT       // 3.14, 1e10, 2.5e-3\nSTRING_LIT      // \"hello\\nworld\", \"tab\\there\"\nCHAR_LIT        // 'a', '\\n', '\\u{1F600}'\nBOOL_LIT        // true, false\n\n// Identifiers & Keywords (25 keywords)\nIDENT           // foo, _bar, camelCase\nFN, LET, MUT, IF, ELSE, MATCH, FOR, WHILE, LOOP, BREAK, CONTINUE,\nRETURN, TYPE, STRUCT, TRAIT, IMPL, SPAWN, CHANNEL, IN, AS, PUB,\nIMPORT, MODULE, SELF_KW, SELF_TYPE\n\n// Operators (20)\nPLUS, MINUS, STAR, SLASH, PERCENT,           // + - * / %\nEQ, NEQ, LT, GT, LEQ, GEQ,                  // == != < > <= >=\nAND, OR, NOT,                                // && || !\nPIPE,                                        // |>\nCONCAT,                                      // ++\nRANGE, RANGE_INCLUSIVE,                       // .. ..=\nASSIGN, ARROW,                               // = ->\n\n// Delimiters\nLPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,\nCOMMA, COLON, SEMICOLON, DOT, DOUBLE_COLON,\nFAT_ARROW,                                   // =>\n\n// Special\nNEWLINE, EOF, ERROR\n```\n\n### Lexer Requirements\n- Single-pass, character-by-character\n- Track line number, column, byte offset for every token\n- Source span: `(start_offset, end_offset)` \u2014 used for error messages\n- Nested block comments: `/* ... /* ... */ ... */`\n- Line comments: `// ...`\n- String escapes: `\\n`, `\\t`, `\\r`, `\\\\`, `\\\"`, `\\0`, `\\u{XXXX}`\n- Raw strings: `r\"no \\escapes here\"`\n- Integer literal bases: decimal, hex (`0x`), binary (`0b`), octal (`0o`)\n- Underscore separators in numeric literals: `1_000_000`, `0xFF_FF`\n- Contextual keywords: `self` is both keyword and valid pattern variable\n- Produce `ERROR` token with message for malformed input (never panic)\n- UTF-8 aware: identifiers may contain Unicode letters (categories L*)\n- Idempotent: same input always produces identical token stream\n\n---\n\n## 2) Parser\n\nHand-written recursive descent + Pratt parsing for expressions.\n\n### Grammar Highlights\n```\nprogram        = (item)* EOF\nitem           = fn_def | type_def | struct_def | trait_def\n               | impl_block | import | module_decl\nfn_def         = \"pub\"? \"fn\" IDENT generics? \"(\" params \")\" (\"->\" type)? block\ntype_def       = \"pub\"? \"type\" IDENT generics? \"{\" variant (\",\" variant)* \",\"? \"}\"\nstruct_def     = \"pub\"? \"struct\" IDENT generics? \"{\" field (\",\" field)* \",\"? \"}\"\ntrait_def      = \"pub\"? \"trait\" IDENT generics? \"{\" trait_method* \"}\"\nimpl_block     = \"impl\" generics? trait_name \"for\" type \"{\" method* \"}\"\n               | \"impl\" generics? type \"{\" method* \"}\"\n\nexpr           = assignment\nassignment     = pipe_expr (\"=\" expr)?\npipe_expr      = or_expr (\"|>\" or_expr)*\nor_expr        = and_expr (\"||\" and_expr)*\nand_expr       = equality (\"&&\" equality)*\nequality       = comparison ((\"==\" | \"!=\") comparison)*\ncomparison     = range ((\"<\" | \">\" | \"<=\" | \">=\") range)*\nrange          = addition ((\"..\" | \"..=\") addition)?\naddition       = multiply ((\"+\" | \"-\" | \"++\") multiply)*\nmultiply       = unary ((\"*\" | \"/\" | \"%\") unary)*\nunary          = (\"!\" | \"-\") unary | call\ncall           = primary (\"(\" args \")\" | \".\" IDENT | \"[\" expr \"]\")*\nprimary        = INT_LIT | FLOAT_LIT | STRING_LIT | CHAR_LIT | BOOL_LIT\n               | IDENT | \"(\" expr \")\" | tuple_expr\n               | if_expr | match_expr | block_expr\n               | lambda | array_lit | struct_lit\n               | for_expr | while_expr | loop_expr\n               | spawn_expr | channel_expr\n\nmatch_expr     = \"match\" expr \"{\" match_arm (\",\" match_arm)* \",\"? \"}\"\nmatch_arm      = pattern (\"if\" expr)? \"=>\" expr\npattern        = \"_\" | IDENT | literal_pat | tuple_pat\n               | variant_pat | struct_pat | \"(\" pattern \")\"\n               | range_pat | or_pat\nvariant_pat    = IDENT \"(\" pattern (\",\" pattern)* \")\"\nor_pat         = pattern (\"|\" pattern)*\n```\n\n### Pratt Precedence (14 levels)\n```\n1  (lowest)  Assignment      =\n2            Pipe            |>\n3            LogicalOr       ||\n4            LogicalAnd      &&\n5            Equality        == !=\n6            Comparison      < > <= >=\n7            Range           .. ..=\n8            Concat          ++\n9            Addition        + -\n10           Multiplication  * / %\n11           Unary           ! - (prefix)\n12           Call            () . []\n13           Field           .field\n14 (highest) Primary         literals, idents, grouped\n```\n\n### AST Node Types\n```go\ntype Node interface {\n    Span() Span\n    nodeTag()\n}\n\n// 40+ AST node types including:\n// - Program, FnDef, TypeDef, StructDef, TraitDef, ImplBlock\n// - Block, LetStmt, ExprStmt, ReturnStmt\n// - IfExpr, MatchExpr, ForExpr, WhileExpr, LoopExpr\n// - BinaryExpr, UnaryExpr, CallExpr, FieldExpr, IndexExpr\n// - LambdaExpr, SpawnExpr, ChannelExpr\n// - IntLit, FloatLit, StringLit, CharLit, BoolLit\n// - ArrayLit, TupleLit, StructLit\n// - Pattern variants: WildcardPat, BindingPat, VariantPat, etc.\n// - TypeExpr variants: NamedType, FnType, TupleType, ArrayType, etc.\n```\n\n### Error Recovery\n- Synchronize on `{`, `}`, `;`, `fn`, `type`, `struct`, `trait`, `impl`\n- Collect up to 20 errors before aborting\n- Each error includes: source span, message, optional \"did you mean?\" hint\n- Missing semicolons: insert automatically before `}` and after\n  expressions followed by newline (if no ambiguity)\n- Unclosed delimiters: report location of opening delimiter\n\n---\n\n## 3) Name Resolution & Semantic Analysis\n\nTwo-pass analysis on the AST before type checking.\n\n### Pass 1: Symbol Table Construction\nBuild a scope tree with lexical scoping:\n```go\ntype Scope struct {\n    Parent   *Scope\n    Children []*Scope\n    Symbols  map[string]*Symbol\n    Kind     ScopeKind  // Module | Function | Block | Impl | Trait\n}\n\ntype Symbol struct {\n    Name       string\n    Kind       SymbolKind  // Variable | Function | Type | Trait | Field | Variant | TypeParam\n    Span       Span\n    Type       Type        // filled in by type checker\n    Mutable    bool\n    Public     bool\n    DefScope   *Scope\n    UsedCount  int\n}\n```\n\nRules:\n- No shadowing in same scope (error). Shadowing in nested scope: warning.\n- Variables must be declared before use.\n- Functions and types can be used before declaration (hoisted within module).\n- `self` only valid inside `impl` blocks.\n- `Self` type alias only valid inside `trait` and `impl` blocks.\n- Generic type parameters scoped to their declaration (fn, type, trait, impl).\n\n### Pass 2: Resolution\n- Resolve every identifier to its `Symbol`.\n- Resolve type names to type definitions.\n- Resolve trait method calls to the correct `impl` block.\n- Resolve variant constructors (e.g., `Leaf(x)`) to their parent type.\n- Check: all match arms cover the type's variants (exhaustiveness checking).\n- Check: no unreachable match arms after a wildcard.\n- Check: `break`/`continue` only inside loops.\n- Check: `return` type matches function signature.\n- Detect unused variables (warning), unused imports (warning), unused\n  mut (warning: \"variable does not need to be mutable\").\n\n---\n\n## 4) Type System & Inference\n\nHindley-Milner type inference extended with traits (type classes).\n\n### Type Representation\n```go\ntype Type interface {\n    typeTag()\n    String() string\n}\n\n// Concrete types\ntype IntType struct{}\ntype FloatType struct{}\ntype BoolType struct{}\ntype CharType struct{}\ntype StringType struct{}\ntype UnitType struct{}\ntype ArrayType struct{ Elem Type; Size int }  // -1 for unsized\ntype SliceType struct{ Elem Type }\ntype TupleType struct{ Elems []Type }\ntype FnType struct{ Params []Type; Return Type }\ntype StructType struct{ Name string; Fields []Field; TypeParams []Type }\ntype EnumType struct{ Name string; Variants []Variant; TypeParams []Type }\ntype ChannelType struct{ Elem Type }\n\n// Inference machinery\ntype TypeVar struct{ ID int }          // unification variable\ntype TypeScheme struct {               // \u2200 a b. Constraint => Type\n    Params      []TypeVar\n    Constraints []TraitBound\n    Body        Type\n}\n```\n\n### Inference Algorithm\n1. **Generate constraints**: walk AST, assign fresh type variables,\n   emit equality constraints and trait constraints.\n2. **Unify**: standard union-find unification.\n   - Occurs check (reject infinite types).\n   - Error on concrete type mismatch with source spans.\n3. **Solve trait constraints**: for each `T: Trait` constraint, find\n   matching `impl`. If `T` is still a variable, defer until resolved.\n   Error if no impl found after all constraints processed.\n4. **Generalize**: at `let` bindings and `fn` definitions, generalize\n   unconstrained type variables into `TypeScheme`.\n5. **Monomorphize**: at call sites, instantiate `TypeScheme` with fresh\n   type variables and add new constraints.\n\n### Trait Resolution\n```\nimpl Summable for Int { ... }\nimpl<T: Summable> Summable for Option<T> { ... }\n```\n- Trait impls form a registry keyed by `(TraitName, ConcreteType)`.\n- Generic impls matched by unification.\n- Coherence: at most one impl per (Trait, Type) pair. Overlapping impls\n  are a compile error.\n- Orphan rule: an impl must be in the same module as either the trait\n  or the type.\n\n### Type Checking Rules (selected)\n- `if cond { a } else { b }`: `cond` must be `Bool`, `a` and `b` must\n  unify to the same type.\n- `match` arms: all patterns must be compatible with scrutinee type,\n  all arm bodies must unify.\n- Binary ops: `+ - * / %` require both operands same numeric type.\n  `++` requires both `String`. `&& ||` require both `Bool`.\n  `== !=` require both same type that implements `Eq`.\n  `< > <= >=` require `Ord`.\n- Array indexing: index must be `Int`, result is element type.\n- Closure: parameter types may be inferred from context. If annotation\n  present, must be consistent.\n- `spawn`: body must return `Unit`. Captures by value (clone).\n- `channel<T>(cap)`: `cap` must be `Int`, result is `Channel<T>`.\n- `ch.send(val)`: `val` must match channel element type.\n- `for x in ch { ... }`: `x` gets channel element type.\n- `for x in a..b { ... }`: `a`, `b` must be `Int`. `x` is `Int`.\n\n### Exhaustiveness Checker\nFor `match` expressions, verify that patterns cover all cases:\n- Wildcard `_` covers everything.\n- Enum: all variants must appear (or wildcard).\n- Tuple: each position must be independently covered.\n- Nested: recursive coverage check.\n- Guard clauses (`if expr`) make the arm non-exhaustive for that variant.\n- Report: \"non-exhaustive patterns: `Variant3` not covered\".\n\n---\n\n## 5) Intermediate Representation\n\n### HIR (High-level IR)\nDesugared AST, produced after type checking:\n- All types fully resolved (no type variables).\n- Generic functions monomorphized (one copy per concrete type combination).\n  Monomorphization limit: 64 instances per generic function (error beyond).\n- Pattern matching compiled to decision trees.\n- `for x in a..b` desugared to `while` + counter.\n- `for x in ch` desugared to `loop { match ch.recv() ... }`.\n- Method calls desugared to static dispatch: `x.foo(y)` \u2192 `Type::foo(x, y)`.\n- Pipe operator desugared: `a |> f |> g` \u2192 `g(f(a))`.\n- String concatenation `++` desugared to `String::concat(a, b)`.\n- Closures: captured variables identified, closure struct generated.\n\n### MIR (Mid-level IR)\nSSA-form (Static Single Assignment) control flow graph:\n```go\ntype MIRFunction struct {\n    Name       string\n    Params     []MIRLocal\n    ReturnType Type\n    Locals     []MIRLocal      // all local variables\n    Blocks     []BasicBlock\n    EntryBlock BlockID\n}\n\ntype BasicBlock struct {\n    ID         BlockID\n    Stmts      []MIRStmt\n    Terminator Terminator\n}\n\ntype MIRStmt interface{ mirStmt() }\n// Assign, Call, BinaryOp, UnaryOp, FieldAccess, IndexAccess,\n// ArrayAlloc, StructAlloc, EnumAlloc, ClosureAlloc,\n// ChannelCreate, ChannelSend, Spawn\n\ntype Terminator interface{ termTag() }\n// Goto(BlockID)\n// Branch(cond MIRValue, then BlockID, else BlockID)\n// Switch(val MIRValue, cases []SwitchCase, default BlockID)\n// Return(MIRValue)\n// Unreachable\n```\n\nEach value in MIR is either:\n- `MIRLocal` (SSA variable, assigned exactly once)\n- `MIRConst` (compile-time constant)\n- `MIRGlobal` (module-level binding)\n\n---\n\n## 6) Optimization Passes\n\nOperate on MIR. Each pass is a function `MIRFunction \u2192 MIRFunction`.\nPasses run in a fixed pipeline:\n\n### Pass Pipeline (11 passes)\n```\n1. ConstantFolding        \u2014 evaluate constant expressions at compile time\n2. DeadCodeElimination    \u2014 remove unreachable blocks and unused assignments\n3. CopyPropagation        \u2014 replace uses of `x = y` with `y` directly\n4. CommonSubexprElim      \u2014 deduplicate identical computations in same block\n5. InlineSmallFunctions   \u2014 inline functions with \u2264 8 MIR statements\n6. ConstantPropagation    \u2014 propagate known constant values through graph\n7. LoopInvariantMotion    \u2014 hoist invariant computations out of loops\n8. TailCallOptimization   \u2014 convert tail-recursive calls to loops\n9. EscapeAnalysis         \u2014 move heap allocations to stack when possible\n10. DeadCodeElimination   \u2014 second pass to clean up after other opts\n11. BlockMerging          \u2014 merge single-predecessor/successor blocks\n```\n\n### Constant Folding Rules\n- `3 + 4` \u2192 `7` (all arithmetic on int/float literals)\n- `true && false` \u2192 `false`\n- `\"hello\" ++ \" world\"` \u2192 `\"hello world\"`\n- `if true { a } else { b }` \u2192 `a`\n- `!true` \u2192 `false`\n- `-(-x)` \u2192 `x`\n- `x * 0` \u2192 `0` (int only, not float due to NaN)\n- `x * 1` \u2192 `x`\n- `x + 0` \u2192 `x`\n- `x / 1` \u2192 `x`\n\n### Escape Analysis\nDetermine if heap-allocated values escape their creating function:\n- If value is only used locally and not captured by closures or sent\n  to channels: allocate on stack instead.\n- Tracks: return, channel send, closure capture, store to heap object.\n- Conservative: if uncertain, keep on heap.\n- Benefit: reduces GC pressure significantly for short-lived objects.\n\n### Tail Call Optimization\nDetect functions where the last operation is a self-recursive call:\n```vex\nfn factorial(n: Int, acc: Int) -> Int {\n    if n <= 1 { acc }\n    else { factorial(n - 1, n * acc) }  // tail position\n}\n```\nConvert to:\n```\nloop {\n    if n <= 1 { return acc }\n    acc = n * acc\n    n = n - 1\n}\n```\n- Only self-recursion (not mutual recursion).\n- Tail position: last expression in function body, last expression in\n  both `if` branches, last expression in match arms.\n\n---\n\n## 7) Bytecode\n\n### Instruction Set (68 instructions)\n\n```\n// Stack operations\nCONST_INT(i64)          // push integer constant\nCONST_FLOAT(f64)        // push float constant\nCONST_TRUE              // push true\nCONST_FALSE             // push false\nCONST_UNIT              // push unit value\nCONST_STRING(idx)       // push string from string pool\nCONST_CHAR(u32)         // push char (Unicode scalar)\nPOP                     // discard top of stack\nDUP                     // duplicate top of stack\nSWAP                    // swap top two values\n\n// Local variable access\nLOAD_LOCAL(slot)        // push local variable\nSTORE_LOCAL(slot)       // pop into local variable\nLOAD_UPVALUE(idx)       // push captured variable (closures)\nSTORE_UPVALUE(idx)      // store into captured variable\n\n// Global access\nLOAD_GLOBAL(idx)        // push module-level binding\nSTORE_GLOBAL(idx)       // store module-level binding\n\n// Arithmetic (operate on top-of-stack)\nADD_INT                 // int + int\nADD_FLOAT               // float + float\nSUB_INT, SUB_FLOAT\nMUL_INT, MUL_FLOAT\nDIV_INT, DIV_FLOAT      // div by zero \u2192 runtime error\nMOD_INT, MOD_FLOAT\nNEG_INT, NEG_FLOAT      // unary negate\n\n// Comparison\nEQ, NEQ                 // structural equality (any type)\nLT_INT, LT_FLOAT\nGT_INT, GT_FLOAT\nLEQ_INT, LEQ_FLOAT\nGEQ_INT, GEQ_FLOAT\n\n// Logical\nNOT                     // boolean not\n// && and || compiled as branches (short-circuit)\n\n// String\nCONCAT_STRING           // pop two strings, push concatenation\n\n// Control flow\nJUMP(offset)            // unconditional jump\nJUMP_IF_TRUE(offset)    // pop, jump if true\nJUMP_IF_FALSE(offset)   // pop, jump if false\nJUMP_TABLE(table_idx)   // indexed jump (for match on int/enum tag)\n\n// Functions\nCALL(arg_count)         // call function on stack with N args\nCALL_METHOD(name_idx, arg_count)  // dispatch method\nTAIL_CALL(arg_count)    // tail call (reuse frame)\nRETURN                  // return top of stack\nMAKE_CLOSURE(fn_idx, upvalue_count)  // create closure object\n\n// Data structures\nMAKE_ARRAY(count)       // pop N values, push array\nMAKE_TUPLE(count)       // pop N values, push tuple\nMAKE_STRUCT(type_idx, field_count)  // pop N values, push struct\nMAKE_ENUM(type_idx, variant_idx, field_count)  // push enum variant\nINDEX_GET               // pop index + collection, push element\nINDEX_SET               // pop value + index + collection\nFIELD_GET(field_idx)    // pop struct, push field value\nFIELD_SET(field_idx)    // pop value + struct, set field\n\n// Heap / GC\nALLOC_ARRAY(count)      // allocate array on heap\nALLOC_CLOSURE           // allocate closure on heap (GC-tracked)\n\n// Pattern matching\nTAG_CHECK(variant_idx)  // check enum tag, push bool\nDESTRUCTURE(count)      // pop enum/tuple, push N fields onto stack\n\n// Concurrency\nCHANNEL_CREATE(cap)     // create channel, push handle\nCHANNEL_SEND            // pop value + channel, send (may block)\nCHANNEL_RECV            // pop channel, push received value (may block)\nCHANNEL_CLOSE           // pop channel, close it\nSPAWN(fn_idx)           // spawn goroutine-like green thread\n\n// Built-ins\nPRINT                   // pop value, print to stdout\nPRINTLN                 // pop value, print with newline\nINT_TO_FLOAT            // type conversion\nFLOAT_TO_INT            // truncating conversion\nINT_TO_STRING\nFLOAT_TO_STRING\nSTRING_LEN              // push length of string\nARRAY_LEN               // push length of array\n\n// Debug\nBREAKPOINT              // VM pauses (debugger hook)\nSOURCE_LOC(line, col)   // annotate for stack traces (no runtime effect)\n```\n\n### Bytecode Format (Binary)\n```\nHeader:\n  magic: [u8; 4]     = [0x56, 0x45, 0x58, 0x00]  // \"VEX\\0\"\n  version: u16        = 1\n  flags: u16          = 0 (reserved)\n\nString Pool:\n  count: u32\n  entries: [\n    len: u32\n    data: [u8; len]   // UTF-8\n  ]\n\nType Pool:\n  count: u32\n  entries: [TypeDescriptor]\n\nFunction Table:\n  count: u32\n  entries: [\n    name_idx: u32       // index into string pool\n    arity: u16\n    locals_count: u16\n    upvalue_count: u16\n    max_stack: u16      // computed by compiler for stack sizing\n    code_offset: u32    // byte offset into code section\n    code_length: u32\n    source_map_offset: u32   // offset into source map section\n  ]\n\nCode Section:\n  raw bytes: instructions encoded as opcode (1 byte) + operands\n\nSource Map:\n  entries: [(bytecode_offset: u32, line: u32, col: u16)]\n\nEntry Point:\n  main_fn_idx: u32    // index of `main` function\n```\n\n### Instruction Encoding\n- Opcode: 1 byte (0x00\u20130xFF)\n- Operands: variable width depending on opcode\n  - `slot`, `idx`, `count`: u16 (max 65535)\n  - `offset`: i16 (relative jump, \u00b132767)\n  - `CONST_INT`: i64 (8 bytes)\n  - `CONST_FLOAT`: f64 (8 bytes)\n  - `CONST_CHAR`: u32 (4 bytes)\n  - `JUMP_TABLE`: u16 count + count \u00d7 i16 offsets\n\n---\n\n## 8) Virtual Machine\n\nStack-based VM with green thread scheduler.\n\n### Runtime Value Representation\n```go\ntype Value struct {\n    Tag  ValueTag   // 1 byte: Int, Float, Bool, Char, Unit, Object\n    Data uint64     // for primitives: raw bits; for objects: heap pointer index\n}\n\ntype HeapObject struct {\n    Header  ObjectHeader\n    Payload interface{}  // StringObj, ArrayObj, StructObj, EnumObj, ClosureObj, ChannelObj\n}\n\ntype ObjectHeader struct {\n    TypeID    uint32\n    GCMark   uint8     // tricolor: White(0), Gray(1), Black(2)\n    Size      uint32    // total allocation size in bytes\n}\n\ntype ClosureObj struct {\n    FnIndex   uint32\n    Upvalues  []*UpvalueCell\n}\n\ntype UpvalueCell struct {\n    Location  *Value     // points to stack slot (open) or own storage (closed)\n    Closed    Value      // storage for closed-over value\n    IsOpen    bool\n}\n\ntype ChannelObj struct {\n    Buffer    []Value\n    Capacity  int\n    Closed    bool\n    Senders   []*Fiber    // blocked senders\n    Receivers []*Fiber    // blocked receivers\n    Mutex     sync.Mutex\n}\n```\n\n### Execution Engine\n```go\ntype VM struct {\n    Fibers       []*Fiber\n    ActiveFiber  *Fiber\n    Heap         *Heap\n    Globals      []Value\n    StringPool   []string\n    Functions    []FnProto\n    Scheduler    *Scheduler\n    GC           *GarbageCollector\n    DebugHooks   *DebugHooks\n}\n\ntype Fiber struct {\n    ID          uint64\n    Frames      []CallFrame       // call stack (max depth 1024)\n    Stack       []Value           // operand stack (max 65536)\n    SP          int               // stack pointer\n    State       FiberState        // Running, Suspended, Blocked, Dead\n    BlockedOn   *ChannelObj       // if blocked on channel op\n    Error       *RuntimeError     // if panicked\n}\n\ntype CallFrame struct {\n    Function   *FnProto\n    IP         int          // instruction pointer (byte offset)\n    BaseSlot   int          // stack base for this frame\n    ReturnSlot int          // where to put return value\n}\n```\n\n### Dispatch Loop\n```go\nfunc (vm *VM) Run() error {\n    for {\n        fiber := vm.Scheduler.NextReady()\n        if fiber == nil {\n            if vm.Scheduler.AllDead() {\n                return nil  // program complete\n            }\n            // All fibers blocked \u2192 deadlock\n            return ErrDeadlock\n        }\n        vm.ActiveFiber = fiber\n        result := vm.ExecuteSlice(fiber, TIMESLICE_INSTRUCTIONS)\n        switch result {\n        case Yielded:\n            vm.Scheduler.Enqueue(fiber)\n        case Blocked:\n            // fiber stays in blocked queue\n        case Completed:\n            fiber.State = Dead\n        case Errored:\n            return fiber.Error\n        }\n    }\n}\n```\n\n- **Timeslice**: each fiber runs for 4096 instructions before yielding\n  to the scheduler (cooperative preemption).\n- **Dispatch**: `switch` on opcode. Each case: decode operands, execute,\n  advance IP.\n- **Stack overflow**: `SP > 65536` \u2192 runtime error with stack trace.\n- **Call depth**: `len(Frames) > 1024` \u2192 runtime error with stack trace.\n- **Division by zero**: runtime error with source location.\n- **Index out of bounds**: runtime error with index and length.\n- **Unwinding**: on error, walk call frames to produce stack trace with\n  source locations (via source map).\n\n### Scheduler\nCooperative M:1 green thread scheduler:\n- Single OS thread runs all fibers.\n- Ready queue: round-robin FIFO.\n- Blocked fibers removed from ready queue, re-added when channel\n  operation unblocks them.\n- `spawn` creates new Fiber, adds to ready queue.\n- Deadlock detection: if all living fibers are blocked and no fiber is\n  ready \u2192 `ErrDeadlock` with list of blocked channels.\n\n### Channel Semantics (CSP-style)\n- Buffered channel: `channel<T>(cap)` \u2014 send blocks when buffer full,\n  recv blocks when buffer empty.\n- Unbuffered channel: `channel<T>(0)` \u2014 send and recv rendezvous\n  (both block until matched).\n- `ch.close()` \u2014 subsequent sends panic, subsequent recvs return\n  remaining buffered values then `None`.\n- `for val in ch { ... }` \u2014 receives until channel closed and empty.\n- Multiple fibers can send/recv on same channel (fan-in, fan-out).\n\n---\n\n## 9) Garbage Collector\n\n### Algorithm: Tricolor Mark-Sweep\nIncremental, non-moving collector operating on the VM heap.\n\n### Heap Structure\n```go\ntype Heap struct {\n    Objects    []*HeapObject     // all allocated objects\n    FreeList   []int             // indices of freed slots\n    BytesAlloc uint64            // total bytes currently allocated\n    Threshold  uint64            // trigger GC when BytesAlloc > Threshold\n    GCStats    GCStats\n}\n\ntype GCStats struct {\n    Collections     uint64\n    TotalPauseNs    uint64\n    TotalFreed      uint64\n    MaxPauseNs      uint64\n    LastCollectionNs uint64\n}\n```\n\n### Collection Phases\n1. **Root scanning**: scan all fiber stacks, all call frames, all globals,\n   all open upvalue cells. Mark reachable objects Gray.\n2. **Tracing**: while Gray set non-empty, pick a Gray object, mark it\n   Black, mark all its references Gray (if White).\n3. **Sweeping**: iterate all objects. White objects are garbage \u2192 free.\n   Reset Black objects to White for next cycle.\n\n### Incremental Mode\nTo avoid long pauses:\n- Root scanning: done atomically (fast, just stack + globals).\n- Tracing: process up to 256 objects per VM instruction slice. If not\n  finished, resume next slice. Write barrier: if a Black object gets a\n  new reference to a White object, re-mark it Gray.\n- Sweeping: process up to 512 objects per slice.\n\n### GC Triggers\n- `BytesAlloc > Threshold` after any allocation.\n- `Threshold` starts at 1MB, grows to `2 \u00d7 BytesAlloc` after each GC\n  (adaptive: grows with live set size).\n- Manual trigger: `__gc()` built-in function.\n- Emergency GC: if allocation fails (shouldn't happen with Go's memory,\n  but safety net).\n\n### Write Barrier\nRequired for incremental collection:\n```go\nfunc (heap *Heap) WriteBarrier(parent *HeapObject, child *HeapObject) {\n    if parent.GCMark == Black && child.GCMark == White {\n        parent.GCMark = Gray\n        heap.GrayList = append(heap.GrayList, parent)\n    }\n}\n```\nInserted by compiler at every STORE_UPVALUE, FIELD_SET, INDEX_SET,\nand channel send.\n\n---\n\n## 10) Standard Library (Built-in)\n\nImplemented in Go, exposed as built-in functions.\n\n### Core Module\n```vex\n// Type conversions\nfn int_to_float(n: Int) -> Float\nfn float_to_int(f: Float) -> Int\nfn int_to_string(n: Int) -> String\nfn float_to_string(f: Float) -> String\nfn parse_int(s: String) -> Result<Int, String>\nfn parse_float(s: String) -> Result<Float, String>\n\n// I/O\nfn print(val: String) -> Unit\nfn println(val: String) -> Unit\nfn read_line() -> String\nfn read_file(path: String) -> Result<String, String>\nfn write_file(path: String, content: String) -> Result<Unit, String>\n\n// String operations\nfn string_len(s: String) -> Int\nfn string_slice(s: String, start: Int, end: Int) -> String\nfn string_contains(haystack: String, needle: String) -> Bool\nfn string_split(s: String, sep: String) -> [String]\nfn string_trim(s: String) -> String\nfn string_chars(s: String) -> [Char]\nfn char_to_string(c: Char) -> String\nfn string_replace(s: String, old: String, new: String) -> String\nfn string_starts_with(s: String, prefix: String) -> Bool\nfn string_ends_with(s: String, suffix: String) -> Bool\nfn string_to_upper(s: String) -> String\nfn string_to_lower(s: String) -> String\n\n// Array operations\nfn array_len<T>(arr: [T]) -> Int\nfn array_push<T>(arr: [T], val: T) -> [T]    // returns new array\nfn array_pop<T>(arr: [T]) -> ([T], Option<T>) // returns new array + popped\nfn array_map<T, U>(arr: [T], f: (T) -> U) -> [U]\nfn array_filter<T>(arr: [T], f: (T) -> Bool) -> [T]\nfn array_fold<T, U>(arr: [T], init: U, f: (U, T) -> U) -> U\nfn array_sort<T: Ord>(arr: [T]) -> [T]\nfn array_reverse<T>(arr: [T]) -> [T]\nfn array_contains<T: Eq>(arr: [T], val: T) -> Bool\nfn array_zip<T, U>(a: [T], b: [U]) -> [(T, U)]\nfn array_enumerate<T>(arr: [T]) -> [(Int, T)]\nfn array_flat_map<T, U>(arr: [T], f: (T) -> [U]) -> [U]\n\n// Math\nfn abs_int(n: Int) -> Int\nfn abs_float(f: Float) -> Float\nfn min_int(a: Int, b: Int) -> Int\nfn max_int(a: Int, b: Int) -> Int\nfn min_float(a: Float, b: Float) -> Float\nfn max_float(a: Float, b: Float) -> Float\nfn sqrt(f: Float) -> Float\nfn pow(base: Float, exp: Float) -> Float\nfn floor(f: Float) -> Int\nfn ceil(f: Float) -> Int\nfn round(f: Float) -> Int\nfn random_int(min: Int, max: Int) -> Int\nfn random_float() -> Float\n\n// Time\nfn time_now_ms() -> Int       // milliseconds since epoch\nfn sleep_ms(ms: Int) -> Unit  // blocks current fiber\n\n// Assertions (for testing)\nfn assert(cond: Bool, msg: String) -> Unit\nfn assert_eq<T: Eq>(a: T, b: T) -> Unit\nfn panic(msg: String) -> !    // never returns, unwind + stack trace\n```\n\n### Built-in Traits\n```vex\ntrait Eq {\n    fn eq(self, other: Self) -> Bool;\n}\n\ntrait Ord: Eq {\n    fn cmp(self, other: Self) -> Int;  // -1, 0, 1\n}\n\ntrait Display {\n    fn to_string(self) -> String;\n}\n\ntrait Default {\n    fn default() -> Self;\n}\n\ntrait Clone {\n    fn clone(self) -> Self;\n}\n\ntrait Hash {\n    fn hash(self) -> Int;\n}\n```\n\nAll primitives auto-implement `Eq`, `Ord`, `Display`, `Default`, `Clone`, `Hash`.\nArrays and tuples implement these if their elements do.\nStructs and enums implement these if all fields/variants do.\n\n---\n\n## 11) Error Reporting\n\n### Compile-Time Errors\n```\nerror[E001]: type mismatch\n  --> src/main.vex:12:15\n   |\n12 |     let x: Int = \"hello\";\n   |            ---   ^^^^^^^ expected `Int`, found `String`\n   |            |\n   |            type annotation here\n\nerror[E002]: unknown variable `foo`\n  --> src/main.vex:8:5\n   |\n 8 |     foo + 1\n   |     ^^^ not found in this scope\n   |\n   = help: did you mean `for`?\n\nerror[E003]: non-exhaustive match\n  --> src/main.vex:20:5\n   |\n20 |     match opt {\n   |     ^^^^^ patterns not covered: `None`\n   |\n   = help: add a `None => ...` arm or a wildcard `_ => ...`\n\nwarning[W001]: unused variable\n  --> src/main.vex:5:9\n   |\n 5 |     let unused = 42;\n   |         ^^^^^^ prefix with `_` to suppress this warning\n```\n\n### Runtime Errors\n```\nruntime error: division by zero\n  --> src/main.vex:15:20\n   |\n15 |     let x = 100 / n;\n   |                    ^\n\nstack trace:\n  at divide(n: Int) -> Int         src/main.vex:15\n  at process(items: [Int]) -> Int  src/main.vex:22\n  at main()                        src/main.vex:31\n\nruntime error: index out of bounds (index: 5, length: 3)\n  --> src/main.vex:10:12\n   |\n10 |     arr[5]\n   |         ^\n\nruntime error: deadlock detected\n  all 3 fibers blocked:\n    fiber 0: blocked receiving on channel#1  src/main.vex:40\n    fiber 1: blocked receiving on channel#2  src/main.vex:55\n    fiber 2: blocked sending on channel#1    src/main.vex:48\n```\n\n---\n\n## 12) Configuration\n\nAll compiler/VM settings in `vex_config.toml`:\n\n```toml\n[compiler]\nmax_errors = 20\nmax_warnings = 100\nmonomorphize_limit = 64\nopt_level = 2                  # 0 = none, 1 = basic, 2 = full pipeline\ninline_threshold = 8           # max MIR statements to inline\ndump_ast = false\ndump_hir = false\ndump_mir = false\ndump_bytecode = false\n\n[vm]\nstack_size = 65536\nmax_call_depth = 1024\nfiber_timeslice = 4096         # instructions per fiber slice\nmax_fibers = 10000\n\n[gc]\ninitial_threshold_bytes = 1048576    # 1 MB\ngrowth_factor = 2.0\nincremental_trace_batch = 256\nincremental_sweep_batch = 512\nenable_incremental = true\n\n[debug]\nsource_maps = true\nstack_traces = true\ngc_stats = false\ninstruction_trace = false      # print every executed instruction (very slow)\n```\n\n---\n\n## 13) Project Structure\n\n```\nvex/\n\u251c\u2500\u2500 go.mod\n\u251c\u2500\u2500 go.sum\n\u251c\u2500\u2500 vex_config.toml\n\u251c\u2500\u2500 README.md\n\u251c\u2500\u2500 cmd/\n\u2502   \u2514\u2500\u2500 vex/\n\u2502       \u2514\u2500\u2500 main.go                    # CLI entry: compile, run, repl, disasm\n\u251c\u2500\u2500 pkg/\n\u2502   \u251c\u2500\u2500 lexer/\n\u2502   \u2502   \u251c\u2500\u2500 lexer.go                   # Scanner: char-by-char tokenization\n\u2502   \u2502   \u251c\u2500\u2500 token.go                   # Token type enum + Token struct\n\u2502   \u2502   \u2514\u2500\u2500 lexer_test.go             # Token stream tests\n\u2502   \u251c\u2500\u2500 parser/\n\u2502   \u2502   \u251c\u2500\u2500 parser.go                  # Recursive descent + Pratt expression parser\n\u2502   \u2502   \u251c\u2500\u2500 ast.go                     # All AST node types (40+)\n\u2502   \u2502   \u251c\u2500\u2500 precedence.go             # Pratt precedence table + handlers\n\u2502   \u2502   \u251c\u2500\u2500 error.go                   # Parse error types + recovery\n\u2502   \u2502   \u2514\u2500\u2500 parser_test.go            # Parse tree tests\n\u2502   \u251c\u2500\u2500 resolver/\n\u2502   \u2502   \u251c\u2500\u2500 resolver.go                # Name resolution (two-pass)\n\u2502   \u2502   \u251c\u2500\u2500 scope.go                   # Scope tree + Symbol table\n\u2502   \u2502   \u251c\u2500\u2500 exhaustiveness.go          # Pattern exhaustiveness checker\n\u2502   \u2502   \u2514\u2500\u2500 resolver_test.go          # Resolution + exhaustiveness tests\n\u2502   \u251c\u2500\u2500 types/\n\u2502   \u2502   \u251c\u2500\u2500 types.go                   # Type representation (all type nodes)\n\u2502   \u2502   \u251c\u2500\u2500 inference.go               # Constraint generation + unification\n\u2502   \u2502   \u251c\u2500\u2500 traits.go                  # Trait resolution + coherence checking\n\u2502   \u2502   \u251c\u2500\u2500 checker.go                 # Type checking driver (walks AST)\n\u2502   \u2502   \u2514\u2500\u2500 types_test.go             # Type inference + checking tests\n\u2502   \u251c\u2500\u2500 hir/\n\u2502   \u2502   \u251c\u2500\u2500 hir.go                     # HIR node types\n\u2502   \u2502   \u251c\u2500\u2500 lower.go                   # AST \u2192 HIR lowering + desugaring\n\u2502   \u2502   \u251c\u2500\u2500 monomorphize.go            # Generic instantiation\n\u2502   \u2502   \u251c\u2500\u2500 match_compile.go           # Pattern match \u2192 decision tree\n\u2502   \u2502   \u2514\u2500\u2500 hir_test.go               # Lowering + monomorphization tests\n\u2502   \u251c\u2500\u2500 mir/\n\u2502   \u2502   \u251c\u2500\u2500 mir.go                     # MIR types (BasicBlock, Stmt, Terminator)\n\u2502   \u2502   \u251c\u2500\u2500 builder.go                 # HIR \u2192 MIR SSA construction\n\u2502   \u2502   \u251c\u2500\u2500 printer.go                 # MIR pretty-printer (for debugging)\n\u2502   \u2502   \u2514\u2500\u2500 mir_test.go               # MIR construction tests\n\u2502   \u251c\u2500\u2500 optimize/\n\u2502   \u2502   \u251c\u2500\u2500 pipeline.go                # Optimization pass runner\n\u2502   \u2502   \u251c\u2500\u2500 constant_fold.go           # Constant folding\n\u2502   \u2502   \u251c\u2500\u2500 dead_code.go               # Dead code elimination\n\u2502   \u2502   \u251c\u2500\u2500 copy_prop.go               # Copy propagation\n\u2502   \u2502   \u251c\u2500\u2500 cse.go                     # Common subexpression elimination\n\u2502   \u2502   \u251c\u2500\u2500 inline.go                  # Function inlining\n\u2502   \u2502   \u251c\u2500\u2500 const_prop.go              # Constant propagation\n\u2502   \u2502   \u251c\u2500\u2500 licm.go                    # Loop-invariant code motion\n\u2502   \u2502   \u251c\u2500\u2500 tco.go                     # Tail call optimization\n\u2502   \u2502   \u251c\u2500\u2500 escape.go                  # Escape analysis\n\u2502   \u2502   \u251c\u2500\u2500 block_merge.go             # Block merging\n\u2502   \u2502   \u2514\u2500\u2500 optimize_test.go          # Tests per pass + combined pipeline\n\u2502   \u251c\u2500\u2500 codegen/\n\u2502   \u2502   \u251c\u2500\u2500 codegen.go                 # MIR \u2192 bytecode emission\n\u2502   \u2502   \u251c\u2500\u2500 bytecode.go                # Instruction set definitions\n\u2502   \u2502   \u251c\u2500\u2500 encoder.go                 # Binary bytecode format writer\n\u2502   \u2502   \u251c\u2500\u2500 decoder.go                 # Binary bytecode format reader\n\u2502   \u2502   \u251c\u2500\u2500 disasm.go                  # Bytecode disassembler (human-readable)\n\u2502   \u2502   \u2514\u2500\u2500 codegen_test.go           # Bytecode emission + round-trip tests\n\u2502   \u251c\u2500\u2500 vm/\n\u2502   \u2502   \u251c\u2500\u2500 vm.go                      # VM core: dispatch loop, stack operations\n\u2502   \u2502   \u251c\u2500\u2500 fiber.go                   # Fiber struct, call frames\n\u2502   \u2502   \u251c\u2500\u2500 scheduler.go               # Green thread scheduler\n\u2502   \u2502   \u251c\u2500\u2500 value.go                   # Runtime value representation\n\u2502   \u2502   \u251c\u2500\u2500 heap.go                    # Heap allocation + object headers\n\u2502   \u2502   \u251c\u2500\u2500 channel.go                 # Channel implementation (CSP semantics)\n\u2502   \u2502   \u251c\u2500\u2500 builtins.go                # Built-in function implementations\n\u2502   \u2502   \u251c\u2500\u2500 error.go                   # Runtime error types + stack trace builder\n\u2502   \u2502   \u2514\u2500\u2500 vm_test.go                # VM execution tests\n\u2502   \u251c\u2500\u2500 gc/\n\u2502   \u2502   \u251c\u2500\u2500 gc.go                      # Tricolor mark-sweep collector\n\u2502   \u2502   \u251c\u2500\u2500 write_barrier.go           # Write barrier for incremental GC\n\u2502   \u2502   \u2514\u2500\u2500 gc_test.go                # GC correctness + pause time tests\n\u2502   \u251c\u2500\u2500 stdlib/\n\u2502   \u2502   \u251c\u2500\u2500 core.go                    # Core built-in functions\n\u2502   \u2502   \u251c\u2500\u2500 string_ops.go             # String operations\n\u2502   \u2502   \u251c\u2500\u2500 array_ops.go              # Array operations\n\u2502   \u2502   \u251c\u2500\u2500 math_ops.go               # Math functions\n\u2502   \u2502   \u251c\u2500\u2500 io.go                      # File I/O\n\u2502   \u2502   \u2514\u2500\u2500 stdlib_test.go            # Standard library tests\n\u2502   \u251c\u2500\u2500 diagnostic/\n\u2502   \u2502   \u251c\u2500\u2500 diagnostic.go              # Error/warning message formatting\n\u2502   \u2502   \u251c\u2500\u2500 source.go                  # Source file registry + span \u2192 line/col\n\u2502   \u2502   \u2514\u2500\u2500 diagnostic_test.go        # Error message formatting tests\n\u2502   \u2514\u2500\u2500 repl/\n\u2502       \u251c\u2500\u2500 repl.go                    # Interactive REPL loop\n\u2502       \u2514\u2500\u2500 repl_test.go              # REPL session tests\n\u251c\u2500\u2500 tests/\n\u2502   \u251c\u2500\u2500 testdata/\n\u2502   \u2502   \u251c\u2500\u2500 lexer/                     # .vex files + expected .tokens files\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 literals.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 operators.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 keywords.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 strings.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 comments.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 unicode.vex\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 errors.vex\n\u2502   \u2502   \u251c\u2500\u2500 parser/                    # .vex files + expected .ast.json files\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 expressions.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 statements.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 functions.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 types.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 patterns.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 generics.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 traits.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 closures.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 concurrency.vex\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 error_recovery.vex\n\u2502   \u2502   \u251c\u2500\u2500 typecheck/                 # .vex files + expected errors or success\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 inference_basic.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 inference_generics.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 traits.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 exhaustiveness.vex\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 errors.vex\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 complex_types.vex\n\u2502   \u2502   \u251c\u2500\u2500 optimize/                  # .mir + expected optimized .mir\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 constant_fold.mir\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 dead_code.mir\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 inline.mir\n\u2502   \u2502   \u2502   \u251c\u2500\u2500 tco.mir\n\u2502   \u2502   \u2502   \u2514\u2500\u2500 escape.mir\n\u2502   \u2502   \u2514\u2500\u2500 programs/                  # Full .vex programs + expected output\n\u2502   \u2502       \u251c\u2500\u2500 hello.vex\n\u2502   \u2502       \u251c\u2500\u2500 fibonacci.vex\n\u2502   \u2502       \u251c\u2500\u2500 quicksort.vex\n\u2502   \u2502       \u251c\u2500\u2500 binary_tree.vex\n\u2502   \u2502       \u251c\u2500\u2500 linked_list.vex\n\u2502   \u2502       \u251c\u2500\u2500 hash_map.vex\n\u2502   \u2502       \u251c\u2500\u2500 closures.vex\n\u2502   \u2502       \u251c\u2500\u2500 pattern_matching.vex\n\u2502   \u2502       \u251c\u2500\u2500 traits.vex\n\u2502   \u2502       \u251c\u2500\u2500 generics_complex.vex\n\u2502   \u2502       \u251c\u2500\u2500 channels_basic.vex\n\u2502   \u2502       \u251c\u2500\u2500 channels_fanout.vex\n\u2502   \u2502       \u251c\u2500\u2500 producer_consumer.vex\n\u2502   \u2502       \u251c\u2500\u2500 dining_philosophers.vex\n\u2502   \u2502       \u251c\u2500\u2500 pipeline.vex\n\u2502   \u2502       \u251c\u2500\u2500 adt_expression.vex\n\u2502   \u2502       \u251c\u2500\u2500 game_of_life.vex\n\u2502   \u2502       \u251c\u2500\u2500 json_parser.vex\n\u2502   \u2502       \u251c\u2500\u2500 brainfuck_interp.vex\n\u2502   \u2502       \u251c\u2500\u2500 mandelbrot.vex\n\u2502   \u2502       \u251c\u2500\u2500 red_black_tree.vex\n\u2502   \u2502       \u251c\u2500\u2500 sieve_of_eratosthenes.vex\n\u2502   \u2502       \u251c\u2500\u2500 graph_bfs.vex\n\u2502   \u2502       \u2514\u2500\u2500 matrix_multiply.vex\n\u2502   \u251c\u2500\u2500 integration/\n\u2502   \u2502   \u251c\u2500\u2500 lexer_golden_test.go       # Golden file tests for lexer\n\u2502   \u2502   \u251c\u2500\u2500 parser_golden_test.go      # Golden file tests for parser\n\u2502   \u2502   \u251c\u2500\u2500 typecheck_golden_test.go   # Golden file tests for type checker\n\u2502   \u2502   \u251c\u2500\u2500 optimize_golden_test.go    # Golden file tests for optimizer\n\u2502   \u2502   \u251c\u2500\u2500 e2e_test.go               # Compile + run programs, check output\n\u2502   \u2502   \u251c\u2500\u2500 error_message_test.go      # Verify error messages are helpful\n\u2502   \u2502   \u251c\u2500\u2500 concurrency_test.go        # Multi-fiber correctness tests\n\u2502   \u2502   \u251c\u2500\u2500 gc_stress_test.go          # GC under allocation pressure\n\u2502   \u2502   \u251c\u2500\u2500 stdlib_test.go             # Standard library integration\n\u2502   \u2502   \u2514\u2500\u2500 regression_test.go         # Bug regression tests\n\u2502   \u2514\u2500\u2500 benchmark/\n\u2502       \u251c\u2500\u2500 bench_lexer_test.go        # Tokens/sec on large input\n\u2502       \u251c\u2500\u2500 bench_parser_test.go       # AST nodes/sec\n\u2502       \u251c\u2500\u2500 bench_typecheck_test.go    # Type checking throughput\n\u2502       \u251c\u2500\u2500 bench_codegen_test.go      # Bytecode emission speed\n\u2502       \u251c\u2500\u2500 bench_vm_test.go           # VM instruction throughput\n\u2502       \u251c\u2500\u2500 bench_gc_test.go           # GC pause times + throughput\n\u2502       \u251c\u2500\u2500 bench_programs_test.go     # End-to-end program benchmarks\n\u2502       \u2514\u2500\u2500 bench_fibonacci_test.go    # fib(35) execution time\n\u2514\u2500\u2500 examples/\n    \u251c\u2500\u2500 hello.vex\n    \u251c\u2500\u2500 calculator.vex\n    \u251c\u2500\u2500 todo_list.vex\n    \u251c\u2500\u2500 concurrent_primes.vex\n    \u2514\u2500\u2500 expression_evaluator.vex\n```\n\n---\n\n## 14) Test Suite\n\n### Unit Tests\n\n**lexer_test.go**\n- All 52 token types produced from representative input\n- Integer literal bases: decimal, hex, binary, octal\n- Underscore separators: `1_000`, `0xFF_FF`\n- Float literals: `3.14`, `1e10`, `2.5e-3`\n- String escapes: all 7 escape sequences\n- Raw strings: no escape processing\n- Character literals: ASCII, Unicode escape\n- Nested block comments: `/* /* */ */`\n- Line + column tracking across multi-line input\n- Source spans: correct byte offsets for every token\n- UTF-8 identifiers: `caf\u00e9`, `na\u00efve`, `\u65e5\u672c\u8a9e`\n- Error recovery: malformed token \u2192 ERROR token with message, scanning continues\n- Keywords vs identifiers: `fn` is keyword, `fn_name` is ident\n- Contextual: `self` recognized in both keyword and pattern contexts\n- Empty input \u2192 single EOF token\n- Consecutive tokens with no whitespace: `1+2` \u2192 INT_LIT PLUS INT_LIT\n- Maximum-munch: `..` is RANGE, `..=` is RANGE_INCLUSIVE, `.` is DOT\n\n**parser_test.go**\n- Pratt precedence: `1 + 2 * 3` \u2192 `Add(1, Mul(2, 3))`\n- All 14 precedence levels with associativity verified\n- Every expression form: if, match, for, while, loop, lambda, spawn, channel\n- Pipe operator: `a |> f |> g` \u2192 `Call(g, Call(f, a))`\n- Every statement form: let, let mut, expression statement, return\n- Every item form: fn, type, struct, trait, impl, import, module\n- Generic syntax: `fn foo<T: Trait1 + Trait2>(x: T) -> T`\n- Pattern matching: all pattern forms, nested, with guards\n- Struct literals: `Point { x: 1, y: 2 }`\n- Array literals: `[1, 2, 3]`\n- Tuple literals: `(1, \"hello\", true)`\n- Closure: `|x: Int, y: Int| -> Int { x + y }`\n- Closure type inference: `|x| x + 1` (parameter type inferred)\n- Block expression: `{ let x = 1; x + 2 }` value is `3`\n- Method call chaining: `a.foo().bar(x).baz()`\n- Index chaining: `a[0][1]`\n- Error recovery: 20 errors then stop; synchronize correctly\n- Missing semicolons: auto-insert where unambiguous\n- Unclosed delimiters: report opener location\n- Empty function body: `fn foo() {}`\n- Trailing commas: allowed in all comma-separated lists\n- AST span preservation: every node has correct source span\n\n**resolver_test.go**\n- Variable use before declaration \u2192 error\n- Function hoisting: call before definition \u2192 ok\n- Nested scopes: inner shadows outer \u2192 warning\n- Same-scope redeclaration \u2192 error\n- Unused variable \u2192 warning\n- Unused `mut` \u2192 warning \"does not need to be mutable\"\n- `self` outside impl \u2192 error\n- `Self` outside trait/impl \u2192 error\n- Type name resolution: all primitive types, user-defined types, generics\n- Variant constructor resolution: `Leaf(x)` \u2192 parent enum type\n- Trait method resolution to correct impl\n- `break` outside loop \u2192 error\n- `continue` outside loop \u2192 error\n- Import resolution: module path \u2192 symbols\n- Generic type parameter scoping: visible in fn body, not outside\n- Exhaustiveness: missing enum variant \u2192 error\n- Exhaustiveness: wildcard covers all \u2192 ok\n- Exhaustiveness: unreachable arm after wildcard \u2192 warning\n- Exhaustiveness: nested patterns checked recursively\n- Exhaustiveness: guard clauses make arm non-exhaustive\n\n**types_test.go**\n- Literal types: `42` is `Int`, `3.14` is `Float`, `true` is `Bool`\n- Let inference: `let x = 42;` \u2192 `x: Int`\n- Let annotation: `let x: Float = 42;` \u2192 type mismatch error\n- Function return type inferred from body\n- Generic function: type variables unified across call\n- Monomorphization: `identity<Int>` and `identity<String>` produce separate instances\n- Trait bound checking: `T: Summable` required for `+` on generic\n- Missing trait impl \u2192 error with helpful message\n- Coherence: overlapping impl \u2192 error\n- Orphan rule: impl in wrong module \u2192 error\n- If/else type: both branches must unify\n- Match arm types: all arms must unify\n- Array element types: all elements must unify\n- Closure capture types: correctly inferred from environment\n- Channel type: `send`/`recv` types must match channel element type\n- Recursive types: `type List<T> { Nil, Cons(T, List<T>) }` \u2192 ok\n- Mutually recursive types \u2192 ok\n- Infinite type (occurs check) \u2192 error\n- `spawn` body must return `Unit`\n- Higher-order function types: `fn apply(f: (Int) -> Int, x: Int) -> Int`\n- Nested generics: `Option<[T]>`, `Result<Option<Int>, String>`\n- Type alias: `type Pair<T> = (T, T)` \u2192 transparent alias\n- Monomorphization limit: >64 instances \u2192 error\n\n**hir_test.go**\n- Desugar `for x in a..b` to while loop with counter\n- Desugar `for x in ch` to loop with channel recv\n- Desugar `x.method(y)` to `Type::method(x, y)`\n- Desugar `a |> f |> g` to `g(f(a))`\n- Desugar `a ++ b` to `String::concat(a, b)`\n- Pattern match compilation to decision tree: correct dispatch\n- Decision tree: no redundant checks\n- Decision tree: respects guard clauses\n- Closure capture: correct variables identified\n- Closure: captured vars become struct fields\n- Monomorphize: generic fn \u2192 concrete fn per type combination\n- Monomorphize: generic struct \u2192 concrete struct per type\n- All type annotations resolved (no TypeVar remaining)\n\n**mir_test.go**\n- SSA construction: each variable assigned exactly once\n- Control flow graph: correct block structure for if/else\n- CFG: correct structure for while loop (header, body, exit blocks)\n- CFG: correct structure for match (one block per arm)\n- CFG: nested if/match flattened correctly\n- Phi nodes: placed at join points for variables defined in branches\n- All terminators: Goto, Branch, Switch, Return, Unreachable\n- Function calls correctly represented\n- Heap allocation instructions for closures, arrays, ADTs\n\n**optimize_test.go**\n- Constant folding: all arithmetic rules verified\n- Constant folding: boolean short-circuit `true && x` \u2192 `x`\n- Dead code: unreachable block removed\n- Dead code: unused assignment removed\n- Copy propagation: `x = y; use(x)` \u2192 `use(y)`\n- CSE: `a + b; ... a + b` \u2192 compute once, reuse\n- Inlining: function \u2264 8 stmts inlined at call site\n- Inlining: recursive function NOT inlined\n- Constant propagation: `let x = 5; y = x + 3` \u2192 `y = 8`\n- LICM: loop-invariant `len(arr)` hoisted before loop\n- TCO: tail-recursive factorial converted to loop\n- TCO: non-tail-recursive function left as recursive call\n- Escape analysis: locally-created array not sent/returned \u2192 stack\n- Escape analysis: array returned from function \u2192 heap\n- Escape analysis: value sent on channel \u2192 heap\n- Block merging: single-pred/single-succ blocks merged\n- Full pipeline: combine all passes, verify correctness preserved\n- Optimization preserves program semantics (run before + after, compare output)\n\n**codegen_test.go**\n- Each opcode encoded/decoded correctly (round-trip)\n- CONST_INT: correct 8-byte encoding\n- CONST_FLOAT: correct IEEE 754 encoding\n- JUMP: correct relative offset encoding\n- JUMP_TABLE: correct count + offsets\n- String pool: strings deduplicated\n- Function table: correct offsets into code section\n- Source map: correct bytecode-to-source mapping\n- Disassembler output matches expected text\n- Bytecode file header: magic number, version\n- Binary format round-trip: encode \u2192 decode \u2192 encode = identical bytes\n- Max stack depth correctly computed per function\n\n**vm_test.go**\n- Each instruction executes correctly (unit test per opcode)\n- Stack operations: push, pop, dup, swap\n- Arithmetic: all ops with edge cases (overflow, div-by-zero)\n- Comparison: all ops, all types\n- String concatenation: empty strings, unicode\n- Function calls: correct frame setup, argument passing, return\n- Recursive calls: stack frames accumulate correctly\n- Tail calls: frame reuse (stack doesn't grow)\n- Closures: upvalue capture and access\n- Closures: upvalue closing when stack frame exits\n- Arrays: create, index, set, bounds checking\n- Tuples: create, destructure\n- Structs: create, field access, field set\n- Enums: create, tag check, destructure\n- Pattern matching: correct dispatch via decision tree\n- Channel: send/recv unbuffered (rendezvous)\n- Channel: send/recv buffered\n- Channel: close + drain\n- Channel: recv on closed empty channel \u2192 None\n- Channel: send on closed channel \u2192 runtime error\n- Fiber scheduling: round-robin order\n- Fiber timeslicing: yield after N instructions\n- Deadlock detection: all fibers blocked \u2192 error\n- Stack overflow: >65536 values \u2192 error with trace\n- Call depth overflow: >1024 frames \u2192 error with trace\n- Runtime error: source location included in message\n- Stack trace: correct unwinding through multiple frames\n\n**gc_test.go**\n- Unreachable objects collected after GC cycle\n- Reachable objects survive GC\n- Circular references collected (not reference counting)\n- GC triggered at threshold\n- Threshold grows after collection (adaptive)\n- Incremental: tracing spread across multiple slices\n- Write barrier: Black\u2192White re-marked Gray\n- Stress: allocate 100K objects, verify only reachable survive\n- Concurrent fibers + GC: no dangling pointers\n- GC stats: correct counts after multiple cycles\n- Open upvalues: not collected while stack frame alive\n- Closed upvalues: collected when closure dead\n- Channel buffers: values in transit not collected\n\n**stdlib_test.go**\n- All string operations: boundary cases, empty strings, Unicode\n- All array operations: empty arrays, single element, large arrays\n- Math functions: edge cases (sqrt negative, pow overflow)\n- parse_int/parse_float: valid input, invalid input, edge cases\n- I/O: read_file/write_file on temp files\n- assert/assert_eq: pass and fail cases\n- Type conversions: int\u2194float\u2194string round-trips\n\n**diagnostic_test.go**\n- Error message formatting matches expected output\n- Source span \u2192 line/col conversion correct\n- Multi-line error underlining correct\n- \"did you mean?\" suggestions for close misspellings\n- Warning formatting distinct from errors\n- Multiple errors accumulated and displayed\n\n### Integration Tests\n\n**e2e_test.go**\nFor each `.vex` file in `tests/testdata/programs/`:\n- Compile to bytecode\n- Run in VM\n- Capture stdout\n- Assert matches expected output (`.expected` file)\n\nPrograms tested (24):\n- `hello.vex` \u2014 basic output\n- `fibonacci.vex` \u2014 recursive + iterative, verify first 20 values\n- `quicksort.vex` \u2014 generic quicksort on [Int] and [String]\n- `binary_tree.vex` \u2014 insert, search, in-order traversal with ADT\n- `linked_list.vex` \u2014 cons list, map, fold, reverse\n- `hash_map.vex` \u2014 open-addressing hash map implementation in Vex\n- `closures.vex` \u2014 adder factory, counter, compose, partial application\n- `pattern_matching.vex` \u2014 nested patterns, guards, exhaustive coverage\n- `traits.vex` \u2014 trait definition, impl, generic dispatch\n- `generics_complex.vex` \u2014 multi-param generics, nested generic types\n- `channels_basic.vex` \u2014 send/recv, buffered/unbuffered\n- `channels_fanout.vex` \u2014 1 producer, N consumers\n- `producer_consumer.vex` \u2014 bounded buffer via channels\n- `dining_philosophers.vex` \u2014 deadlock-free solution using channels\n- `pipeline.vex` \u2014 multi-stage pipeline (generate \u2192 filter \u2192 transform \u2192 collect)\n- `adt_expression.vex` \u2014 expression evaluator with ADT (Num, Add, Mul, Neg)\n- `game_of_life.vex` \u2014 N-step Conway's Game of Life (grid as array)\n- `json_parser.vex` \u2014 simple JSON parser returning ADT\n- `brainfuck_interp.vex` \u2014 brainfuck interpreter in Vex\n- `mandelbrot.vex` \u2014 ASCII art mandelbrot set\n- `red_black_tree.vex` \u2014 self-balancing BST with pattern matching\n- `sieve_of_eratosthenes.vex` \u2014 concurrent sieve with channels\n- `graph_bfs.vex` \u2014 BFS on adjacency list graph\n- `matrix_multiply.vex` \u2014 NxN matrix multiplication\n\n**concurrency_test.go**\n- 100 fibers all incrementing shared counter via channel \u2192 correct total\n- Fan-out: 1 sender, 10 receivers, all values received exactly once\n- Fan-in: 10 senders, 1 receiver, all values received\n- Pipeline: 5-stage pipeline, correct order and values\n- Channel close: receivers see all buffered values then stop\n- Deadlock detection: two fibers mutually blocked \u2192 error\n- No-deadlock false positive: temporarily blocked fibers recover\n- Fiber spawn ordering: spawned fibers execute in reasonable order\n- High fiber count: 1000 fibers, all complete\n- Sleep: fiber sleeps, others continue executing\n\n**gc_stress_test.go**\n- Allocate 1M small objects, keep 1K alive, verify GC reclaims rest\n- Closure chain: 10000 closures, each capturing previous, verify GC\n  doesn't prematurely collect\n- Concurrent allocation: multiple fibers allocating simultaneously\n- Write barrier correctness: modify heap objects during GC, verify integrity\n- GC pause time: p99 < 10ms under sustained allocation pressure (1M objects/sec)\n- GC throughput: reclaim rate > 100K objects/sec\n\n**error_message_test.go**\n- Type mismatch: correct expected/found types shown\n- Unknown variable: \"did you mean?\" suggestion shown\n- Missing trait impl: trait and type names shown\n- Non-exhaustive match: missing variants listed\n- Duplicate definition: location of first definition shown\n- Runtime error: source location + stack trace present\n\n**regression_test.go**\n- (Populated as bugs are found during development)\n- Each test case: minimal reproduction, expected behavior\n\n### Golden File Tests\n\n**lexer_golden_test.go**\n- For each `tests/testdata/lexer/*.vex`: lex file, compare token stream\n  against `*.tokens` golden file. `go test -update` flag regenerates.\n\n**parser_golden_test.go**\n- For each `tests/testdata/parser/*.vex`: parse file, compare AST JSON\n  against `*.ast.json` golden file.\n\n**typecheck_golden_test.go**\n- For each `tests/testdata/typecheck/*.vex`: type check, compare\n  diagnostics against `*.diagnostics` golden file.\n\n**optimize_golden_test.go**\n- For each `tests/testdata/optimize/*.mir`: optimize, compare result\n  against `*.optimized.mir` golden file.\n\n### Benchmarks (`go test -bench`)\n\n- **Lexer throughput**: tokens/sec on 10K-line source file (target: >5M tokens/sec)\n- **Parser throughput**: AST nodes/sec on 10K-line source (target: >500K nodes/sec)\n- **Type checking**: expressions/sec (target: >200K/sec)\n- **Codegen**: bytecode bytes/sec (target: >1M bytes/sec)\n- **VM dispatch**: instructions/sec (target: >100M instr/sec)\n- **VM fibonacci**: `fib(35)` execution time (target: < 2s)\n- **VM quicksort**: sort 10K integers (target: < 500ms)\n- **GC pause**: p99 pause time with 1M live objects (target: < 10ms)\n- **GC throughput**: objects freed/sec (target: > 100K/sec)\n- **Compile + run**: end-to-end time for `fibonacci.vex` (target: < 100ms)\n\n---\n\n## 15) CLI Interface\n\n```bash\n# Compile and run\nvex run program.vex\n\n# Compile to bytecode file\nvex build program.vex -o program.vexc\n\n# Run compiled bytecode\nvex exec program.vexc\n\n# Interactive REPL\nvex repl\n\n# Disassemble bytecode\nvex disasm program.vexc\n\n# Dump intermediate representations\nvex run program.vex --dump-ast\nvex run program.vex --dump-hir\nvex run program.vex --dump-mir\nvex run program.vex --dump-bytecode\n\n# Run with GC stats\nvex run program.vex --gc-stats\n\n# Run with instruction trace (very verbose)\nvex run program.vex --trace\n\n# Type check only (no execution)\nvex check program.vex\n\n# Format source code (bonus feature)\nvex fmt program.vex\n```\n\n### REPL Features\n- Compile and execute expressions interactively\n- Persistent state across inputs (variables survive between entries)\n- Multi-line input: open brace \u2192 continue on next line\n- `:type expr` \u2014 show inferred type without executing\n- `:ast expr` \u2014 show parsed AST\n- `:bytecode expr` \u2014 show generated bytecode\n- `:quit` \u2014 exit\n- Arrow key history\n\n---\n\n## 16) Deliverables\n\nSource code for:\n- Lexer (hand-written scanner, 52 token types, UTF-8 aware, error recovery)\n- Parser (recursive descent + Pratt, 14 precedence levels, 40+ AST nodes,\n  error recovery with synchronization)\n- Name resolver (two-pass, scope tree, exhaustiveness checker)\n- Type system (Hindley-Milner inference, trait resolution, coherence\n  checking, exhaustiveness, monomorphization)\n- HIR lowering (desugaring, pattern match compilation, closure transform)\n- MIR construction (SSA form, CFG, phi nodes)\n- Optimization passes (11 passes: constant folding, DCE, copy propagation,\n  CSE, inlining, constant propagation, LICM, TCO, escape analysis, DCE2,\n  block merging)\n- Bytecode codegen (68-instruction ISA, binary format, source maps)\n- Virtual machine (stack-based, fiber scheduler, channel CSP semantics)\n- Garbage collector (tricolor incremental mark-sweep, write barriers)\n- Standard library (50+ built-in functions, 6 built-in traits)\n- Error reporting (compile-time and runtime, source spans, stack traces,\n  suggestions)\n- CLI (compile, run, REPL, disassemble, check, dump IR)\n- Full test suite (unit + golden + integration + concurrency + GC stress\n  + benchmarks)\n- 24 example programs from hello world to concurrent sieve\n- TOML configuration with documented defaults\n\nREADME.md including:\n- Language tutorial (syntax, types, pattern matching, traits, closures,\n  concurrency, error handling)\n- Architecture overview (compiler pipeline diagram)\n- How to build and run\n- REPL usage guide\n- Bytecode instruction set reference\n- Optimization passes explained\n- GC design and tuning\n- Standard library reference\n- CLI reference\n- Test suite description + `go test` instructions\n- Benchmark results and performance notes\n- Config reference\n- Grammar specification (EBNF)\n- Known limitations / future ideas (module system, incremental compilation,\n  JIT, debugger, LSP server, package manager)",
   "phase": "executing",
   "lineage": {
-    "run_id": "09202efb",
+    "run_id": "73d173c8",
     "parent_run_id": "",
     "parent_run_dir": "",
-    "root_run_id": "09202efb",
-    "continuation_mode": "fresh",
+    "root_run_id": "73d173c8",
+    "continuation_mode": "resume",
     "base_ref": "",
     "base_commit": "",
     "parent_summary": {}
@@ -16,309 +16,245 @@
     "started_via": "attoswarm",
     "command_family": "attoswarm"
   },
-  "updated_at": "2026-03-18T19:36:22.481233+00:00",
+  "updated_at": "2026-03-18T21:53:51.743758+00:00",
   "dag": {
     "nodes": [
       {
         "task_id": "task-1",
-        "title": "ObjMap core types and heap allocation",
+        "title": "Fix println string quoting in VM builtins",
         "status": "done",
-        "description": "Add MapObj heap type to pkg/vm/value.go and AllocMap to pkg/vm/heap.go.\n\nIn value.go:\n1. Add ObjMap byte constant = 0x27 after ObjChannel = 0x26\n2. Add mapEntry struct with Key and Value fields (both ",
+        "description": "The hello.ryx E2E test fails because println outputs '\"Hello, World!\"' (with quotes) instead of 'Hello, World!' (without quotes). The VM's PRINTLN instruction or the builtins.go print implementation i",
         "task_kind": "implement",
-        "role_hint": "impl-claude",
+        "role_hint": "impl",
         "assigned_agent": "agent-task-1",
         "target_files": [
-          "pkg/vm/value.go",
-          "pkg/vm/heap.go"
+          "pkg/vm/vm.go",
+          "pkg/vm/builtins.go",
+          "pkg/vm/value.go"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"8e9e8060-4434-4ad7-9938-cf4c72b31526\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"b45e1fa9-e7e5-4b88-aed3-246c0b1f0d11\",",
-        "tokens_used": 4741,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"2e670764-b47e-4886-87ca-0014751b5a5d\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"d6a4ab59-edb9-458a-8ec9-d7b5ed2cf72d\",",
+        "tokens_used": 18163,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": true,
         "quality_score": null,
         "depended_by": [
-          "task-2",
-          "task-3",
-          "task-4"
+          "task-7",
+          "task-8",
+          "task-9"
         ]
       },
       {
         "task_id": "task-2",
-        "title": "MapObj value trait implementations",
-        "status": "pending",
-        "description": "Add *MapObj cases to all trait functions in pkg/vm/builtins.go.\n\n1. In Equal() (via the Value.Equal method in value.go): Add case *MapObj that compares Count, then iterates sa.Buckets checking that sb",
+        "title": "Fix closure/lambda codegen function resolution",
+        "status": "done",
+        "description": "E2E tests closures.ryx and generics_complex.ryx fail with 'unknown function make_adder$lambda0 in closure' and 'unknown function main$lambda0 in closure'. The codegen phase in pkg/codegen/codegen.go c",
         "task_kind": "implement",
-        "role_hint": "impl-claude",
-        "assigned_agent": "",
+        "role_hint": "impl",
+        "assigned_agent": "agent-task-2",
         "target_files": [
-          "pkg/vm/builtins.go"
+          "pkg/codegen/codegen.go",
+          "pkg/hir/lower.go"
         ],
-        "result_summary": "",
-        "tokens_used": 0,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"ca095b11-b6f3-4450-9a12-549305ddf557\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"d8d850ae-31df-4b65-8469-d4ed158e0351\",",
+        "tokens_used": 8923,
         "cost_usd": 0.0,
-        "attempt_count": 0,
+        "attempt_count": 1,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-14"
+          "task-9"
         ]
       },
       {
         "task_id": "task-3",
-        "title": "GC integration for MapObj",
-        "status": "pending",
-        "description": "Add Map support to the garbage collector in pkg/gc/.\n\n1. In pkg/gc/gc.go: Add KindMap ObjectKind constant after KindFiber in the iota enum.\n\n2. In pkg/gc/write_barrier.go: Add BarrierMapSet(mapObj, ke",
+        "title": "Fix trait method self-parameter arity mismatch",
+        "status": "done",
+        "description": "The traits.ryx E2E test fails with 'function arity mismatch: expected 1 parameters, found 0'. This happens in type checking when trait methods with 'self' parameter are resolved. The issue is likely i",
         "task_kind": "implement",
-        "role_hint": "impl-claude",
-        "assigned_agent": "",
+        "role_hint": "impl",
+        "assigned_agent": "agent-task-3",
         "target_files": [
-          "pkg/gc/gc.go",
-          "pkg/gc/write_barrier.go"
+          "pkg/types/checker.go",
+          "pkg/types/traits.go"
         ],
-        "result_summary": "",
-        "tokens_used": 0,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"b197eb84-aa40-4753-9e30-85ec1af5cc1d\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"d3c9785f-3f62-4b69-84f4-e4789615959a\",",
+        "tokens_used": 8378,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-14"
+          "task-9"
         ]
       },
       {
         "task_id": "task-4",
-        "title": "Map stdlib functions",
+        "title": "Fix recursive ADT dispatch causing call depth exceeded",
         "status": "pending",
-        "description": "Create new file pkg/stdlib/map_ops.go with 12 map operations.\n\nAdd resolveMap helper (checks Tag==TagObj, TypeID==ObjMap, asserts *MapObj).\n\nImplement these functions following the exact signatures an",
+        "description": "Multiple E2E tests (binary_tree, linked_list, pattern_matching, adt_expression, red_black_tree) fail with 'runtime error: call depth exceeded (max 1024)'. These all involve recursive functions over al",
         "task_kind": "implement",
-        "role_hint": "impl-claude",
-        "assigned_agent": "",
+        "role_hint": "impl",
+        "assigned_agent": "agent-task-4",
         "target_files": [
-          "pkg/stdlib/map_ops.go"
+          "pkg/hir/match_compile.go",
+          "pkg/hir/lower.go",
+          "pkg/codegen/codegen.go"
         ],
         "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": true,
+        "attempt_count": 2,
+        "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-11",
-          "task-14"
+          "task-9"
         ]
       },
       {
         "task_id": "task-5",
-        "title": "Math stdlib expansion",
-        "status": "done",
-        "description": "Add 16 new math functions to pkg/stdlib/math_ops.go.\n\nAll follow the existing pattern using toFloat() helper for auto-promotion.\n\nTrigonometric (all 1-arg, return Float):\n- Sin, Cos, Tan, Asin, Acos, ",
+        "title": "Fix VM stack underflow panics in arithmetic operations",
+        "status": "pending",
+        "description": "E2E tests fibonacci.ryx, quicksort.ryx, and matrix_multiply.ryx crash with Go-level panics: 'index out of range [-1]' in fiber.go:89 (Pop) and 'index out of range [1] with length 1'. These indicate th",
         "task_kind": "implement",
-        "role_hint": "impl-codex",
+        "role_hint": "impl",
         "assigned_agent": "agent-task-5",
         "target_files": [
-          "pkg/stdlib/math_ops.go"
+          "pkg/codegen/codegen.go",
+          "pkg/vm/vm.go",
+          "pkg/vm/fiber.go"
         ],
-        "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026d-41ce-7191-a8f3-9c387f350708\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m checking the exis",
+        "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
-        "attempt_count": 0,
+        "attempt_count": 2,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-12"
+          "task-9"
         ]
       },
       {
         "task_id": "task-6",
-        "title": "Time and random stdlib functions",
+        "title": "Fix array index out of bounds in VM execution",
         "status": "done",
-        "description": "Create new file pkg/stdlib/time_ops.go with 5 functions.\n\nPackage-level state:\n- var rng *rand.Rand with sync.Mutex protection\n- init() function that seeds rng with time.Now().UnixNano()\n\nFunctions:\n1",
+        "description": "E2E tests game_of_life.ryx and graph_bfs.ryx fail with 'runtime error: index 25 out of bounds (length 25)' and 'index 10 out of bounds (length 10)'. These are off-by-one errors where the programs use ",
         "task_kind": "implement",
-        "role_hint": "impl-codex",
+        "role_hint": "impl",
         "assigned_agent": "agent-task-6",
         "target_files": [
-          "pkg/stdlib/time_ops.go"
+          "pkg/hir/lower.go"
         ],
-        "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026d-427a-70d1-8de3-992d541b1427\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m checking the stdl",
-        "tokens_used": 0,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"7dfa4b30-06eb-43bc-9603-fcc39e411f67\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"56dd68ef-b5b5-4f28-ac39-cb034da629ee\",",
+        "tokens_used": 5931,
         "cost_usd": 0.0,
-        "attempt_count": 0,
+        "attempt_count": 1,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-12"
+          "task-9"
         ]
       },
       {
         "task_id": "task-7",
-        "title": "Array stdlib expansion",
-        "status": "done",
-        "description": "Add 12 new array functions to pkg/stdlib/array_ops.go.\n\nFunctions using CallbackInvoker (higher-order):\n- ArrayFind: 2 args (array, predicate), returns makeResultOk(first match) or makeResultErr(\"not ",
+        "title": "Fix hash_map and json_parser value computation returning zeros",
+        "status": "pending",
+        "description": "E2E tests hash_map.ryx and json_parser.ryx produce all zeros instead of expected computed values. The programs compile and run without crashing but produce wrong results. This likely indicates that st",
         "task_kind": "implement",
-        "role_hint": "impl-claude",
+        "role_hint": "impl",
         "assigned_agent": "agent-task-7",
         "target_files": [
-          "pkg/stdlib/array_ops.go"
+          "pkg/vm/vm.go",
+          "pkg/vm/value.go",
+          "pkg/vm/heap.go"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"4c24e483-74f3-4575-b907-1686d9487ebd\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"8b3e6f6e-7c63-4759-890f-bbd2e4facb55\",",
-        "tokens_used": 7525,
+        "result_summary": "",
+        "tokens_used": 0,
         "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": true,
+        "attempt_count": 1,
+        "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-13",
-          "task-14"
+          "task-9"
         ]
       },
       {
         "task_id": "task-8",
-        "title": "String stdlib expansion",
-        "status": "done",
-        "description": "Add 6 new string functions to pkg/stdlib/string_ops.go.\n\n1. StringIndexOf: 2 args (haystack, needle), returns codepoint index (not byte index) using strings.Index then utf8.RuneCountInString for conve",
+        "title": "Fix brainfuck interpreter unknown tag output",
+        "status": "pending",
+        "description": "The brainfuck_interp.ryx E2E test outputs '<unknown tag=0>' instead of expected integer values '3' and '5'. This means the VM is printing values with an unrecognized ValueTag. The issue is likely that",
         "task_kind": "implement",
-        "role_hint": "impl-codex",
+        "role_hint": "impl",
         "assigned_agent": "agent-task-8",
         "target_files": [
-          "pkg/stdlib/string_ops.go"
+          "pkg/vm/vm.go",
+          "pkg/vm/value.go"
         ],
-        "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026e-c0b9-7c31-aabd-6d531f7a8753\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m checking the exis",
+        "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
-        "attempt_count": 0,
+        "attempt_count": 1,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-13"
+          "task-9"
         ]
       },
       {
         "task_id": "task-9",
-        "title": "Filesystem stdlib expansion",
-        "status": "done",
-        "description": "Add 8 filesystem functions to pkg/stdlib/io.go.\n\n1. FileExists: 1 arg (path string), returns BoolVal(os.Stat(path) == nil)\n2. DirList: 1 arg, returns Result<[String], String> using os.ReadDir, returns",
-        "task_kind": "implement",
-        "role_hint": "impl-codex",
-        "assigned_agent": "agent-task-9",
+        "title": "Integration test verification after bug fixes",
+        "status": "pending",
+        "description": "After tasks 1-8 are complete, run the full test suite (go test ./...) to verify: (1) all unit tests still pass, (2) all 24 E2E programs produce correct output matching their .expected files, (3) concu",
+        "task_kind": "judge",
+        "role_hint": "judge",
+        "assigned_agent": "",
         "target_files": [
-          "pkg/stdlib/io.go"
+          "tests/integration/e2e_test.go"
         ],
-        "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026e-fdcc-7e10-9197-05f4a01082a5\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m updating the file",
+        "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10",
-          "task-13"
+          "task-10"
         ]
       },
       {
         "task_id": "task-10",
-        "title": "Conversion functions and RegisterAll updates",
+        "title": "Fix any remaining E2E test failures from integration verification",
         "status": "pending",
-        "description": "Update pkg/stdlib/core.go with:\n\n1. Add 3 new conversion functions IN core.go:\n   - BoolToString: 1 Bool arg, returns heap-allocated \"true\" or \"false\" string\n   - CharToInt: 1 Char arg, returns IntVal",
-        "task_kind": "integrate",
-        "role_hint": "impl-claude",
+        "description": "Based on the results of task-9 (integration verification), fix any remaining E2E test failures. This is a catch-all task for issues that were not fully resolved by the targeted fix tasks (1-8) or that",
+        "task_kind": "implement",
+        "role_hint": "impl",
         "assigned_agent": "",
         "target_files": [
-          "pkg/stdlib/core.go"
+          "pkg/vm/vm.go",
+          "pkg/codegen/codegen.go",
+          "pkg/hir/lower.go",
+          "pkg/hir/match_compile.go",
+          "pkg/types/checker.go"
         ],
         "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
         "attempt_count": 0,
-        "is_foundation": true,
+        "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-11",
-          "task-12",
-          "task-13",
-          "task-14"
+          "task-11"
         ]
       },
       {
         "task_id": "task-11",
-        "title": "Map stdlib unit tests",
+        "title": "Final full test suite validation",
         "status": "pending",
-        "description": "Create pkg/stdlib/map_ops_test.go with comprehensive unit tests for all 12 map functions.\n\nTest cases (see goal spec section 9.1):\n- TestMapNewAndLen: create empty map, verify len=0\n- TestMapSetAndGet",
-        "task_kind": "test",
-        "role_hint": "impl-claude",
+        "description": "Run the complete test suite one final time to confirm all tests pass: go test ./... . Verify all 24 E2E programs pass, all unit tests pass across all packages (lexer, parser, resolver, types, hir, mir",
+        "task_kind": "judge",
+        "role_hint": "judge",
         "assigned_agent": "",
-        "target_files": [
-          "pkg/stdlib/map_ops_test.go"
-        ],
-        "result_summary": "",
-        "tokens_used": 0,
-        "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": false,
-        "quality_score": null,
-        "depended_by": []
-      },
-      {
-        "task_id": "task-12",
-        "title": "Math, time, random, and conversion unit tests",
-        "status": "pending",
-        "description": "Add unit tests for the new math, time, random, and conversion functions.\n\nAdd tests to the existing test file pattern (likely pkg/stdlib/stdlib_test.go or create new files as appropriate).\n\nMath tests",
-        "task_kind": "test",
-        "role_hint": "impl-codex",
-        "assigned_agent": "",
-        "target_files": [
-          "pkg/stdlib/math_ops_test.go",
-          "pkg/stdlib/time_ops_test.go"
-        ],
-        "result_summary": "",
-        "tokens_used": 0,
-        "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": false,
-        "quality_score": null,
-        "depended_by": []
-      },
-      {
-        "task_id": "task-13",
-        "title": "Array, string, and filesystem unit tests",
-        "status": "pending",
-        "description": "Add unit tests for the new array, string, and filesystem expansion functions.\n\nArray tests (see spec section 9.3):\n- array_sum([3,1,4,1,5])=14(Int), array_sum([])=0, array_sum with floats\n- array_min/",
-        "task_kind": "test",
-        "role_hint": "impl-codex",
-        "assigned_agent": "",
-        "target_files": [
-          "pkg/stdlib/array_ops_test.go",
-          "pkg/stdlib/string_ops_test.go",
-          "pkg/stdlib/io_test.go"
-        ],
-        "result_summary": "",
-        "tokens_used": 0,
-        "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": false,
-        "quality_score": null,
-        "depended_by": []
-      },
-      {
-        "task_id": "task-14",
-        "title": "Integration test programs",
-        "status": "pending",
-        "description": "Create .ryx integration test programs and their expected output files in tests/testdata/programs/.\n\nCreate these 4 programs with exact content from goal spec section 9.7:\n\n1. map_operations.ryx + map_",
-        "task_kind": "integrate",
-        "role_hint": "impl-claude",
-        "assigned_agent": "",
-        "target_files": [
-          "tests/testdata/programs/map_operations.ryx",
-          "tests/testdata/programs/map_operations.expected",
-          "tests/testdata/programs/word_counter.ryx",
-          "tests/testdata/programs/word_counter.expected",
-          "tests/testdata/programs/phone_book.ryx"
-        ],
+        "target_files": [],
         "result_summary": "",
         "tokens_used": 0,
         "cost_usd": 0.0,
@@ -331,95 +267,51 @@
     "edges": [
       [
         "task-1",
-        "task-2"
+        "task-7"
       ],
       [
         "task-1",
-        "task-3"
+        "task-8"
       ],
       [
         "task-1",
-        "task-4"
-      ],
-      [
-        "task-4",
-        "task-10"
-      ],
-      [
-        "task-5",
-        "task-10"
-      ],
-      [
-        "task-6",
-        "task-10"
-      ],
-      [
-        "task-7",
-        "task-10"
-      ],
-      [
-        "task-8",
-        "task-10"
-      ],
-      [
-        "task-9",
-        "task-10"
-      ],
-      [
-        "task-4",
-        "task-11"
-      ],
-      [
-        "task-10",
-        "task-11"
-      ],
-      [
-        "task-5",
-        "task-12"
-      ],
-      [
-        "task-6",
-        "task-12"
-      ],
-      [
-        "task-10",
-        "task-12"
-      ],
-      [
-        "task-7",
-        "task-13"
-      ],
-      [
-        "task-8",
-        "task-13"
-      ],
-      [
-        "task-9",
-        "task-13"
-      ],
-      [
-        "task-10",
-        "task-13"
+        "task-9"
       ],
       [
         "task-2",
-        "task-14"
+        "task-9"
       ],
       [
         "task-3",
-        "task-14"
+        "task-9"
       ],
       [
         "task-4",
-        "task-14"
+        "task-9"
+      ],
+      [
+        "task-5",
+        "task-9"
+      ],
+      [
+        "task-6",
+        "task-9"
       ],
       [
         "task-7",
-        "task-14"
+        "task-9"
+      ],
+      [
+        "task-8",
+        "task-9"
+      ],
+      [
+        "task-9",
+        "task-10"
       ],
       [
         "task-10",
-        "task-14"
+        "task-11"
       ]
     ]
   },
@@ -428,11 +320,65 @@
       "agent_id": "agent-task-1",
       "task_id": "task-1",
       "status": "done",
-      "tokens_used": 4741,
-      "started_at_epoch": 1773862206.4143019,
+      "tokens_used": 18163,
+      "started_at_epoch": 1773864269.866941,
       "model": "",
-      "task_title": "ObjMap core types and heap allocation",
+      "task_title": "Fix println string quoting in VM builtins",
       "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-2",
+      "task_id": "task-2",
+      "status": "done",
+      "tokens_used": 8923,
+      "started_at_epoch": 1773864843.683136,
+      "model": "",
+      "task_title": "Fix closure/lambda codegen function resolution",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-3",
+      "task_id": "task-3",
+      "status": "done",
+      "tokens_used": 8378,
+      "started_at_epoch": 1773865443.7143831,
+      "model": "",
+      "task_title": "Fix trait method self-parameter arity mismatch",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-4",
+      "task_id": "task-4",
+      "status": "error",
+      "tokens_used": 0,
+      "started_at_epoch": 1773865664.56402,
+      "model": "",
+      "task_title": "Fix recursive ADT dispatch causing call depth exceeded",
+      "activity": "error",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
       "exit_code": null,
@@ -445,12 +391,12 @@
     {
       "agent_id": "agent-task-5",
       "task_id": "task-5",
-      "status": "done",
+      "status": "error",
       "tokens_used": 0,
-      "started_at_epoch": 1773862206.420379,
+      "started_at_epoch": 1773866264.622145,
       "model": "",
-      "task_title": "Math stdlib expansion",
-      "activity": "cost_delta",
+      "task_title": "Fix VM stack underflow panics in arithmetic operations",
+      "activity": "error",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
       "exit_code": null,
@@ -464,10 +410,10 @@
       "agent_id": "agent-task-6",
       "task_id": "task-6",
       "status": "done",
-      "tokens_used": 0,
-      "started_at_epoch": 1773862206.425345,
+      "tokens_used": 5931,
+      "started_at_epoch": 1773866864.675808,
       "model": "",
-      "task_title": "Time and random stdlib functions",
+      "task_title": "Fix array index out of bounds in VM execution",
       "activity": "cost_delta",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
@@ -481,12 +427,12 @@
     {
       "agent_id": "agent-task-7",
       "task_id": "task-7",
-      "status": "done",
-      "tokens_used": 7525,
-      "started_at_epoch": 1773862206.4310699,
+      "status": "error",
+      "tokens_used": 0,
+      "started_at_epoch": 1773869631.464245,
       "model": "",
-      "task_title": "Array stdlib expansion",
-      "activity": "cost_delta",
+      "task_title": "Fix hash_map and json_parser value computation returning zeros",
+      "activity": "error",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
       "exit_code": null,
@@ -499,30 +445,12 @@
     {
       "agent_id": "agent-task-8",
       "task_id": "task-8",
-      "status": "done",
+      "status": "error",
       "tokens_used": 0,
-      "started_at_epoch": 1773862305.929415,
+      "started_at_epoch": 1773870231.6794088,
       "model": "",
-      "task_title": "String stdlib expansion",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-9",
-      "task_id": "task-9",
-      "status": "done",
-      "tokens_used": 0,
-      "started_at_epoch": 1773862321.576128,
-      "model": "",
-      "task_title": "Filesystem stdlib expansion",
-      "activity": "cost_delta",
+      "task_title": "Fix brainfuck interpreter unknown tag output",
+      "activity": "error",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
       "exit_code": null,
@@ -534,32 +462,151 @@
     }
   ],
   "budget": {
-    "tokens_used": 12266,
+    "tokens_used": 41395,
     "tokens_max": 5000000,
     "cost_used_usd": 0.0,
     "cost_max_usd": 50.0
   },
   "dag_summary": {
-    "done": 6,
-    "pending": 8
+    "done": 4,
+    "pending": 7
   },
-  "elapsed_s": 564.3129589557648,
-  "state_seq": 5,
+  "elapsed_s": 6850.355823993683,
+  "state_seq": 27,
   "merge_queue": {},
   "attempts": {},
   "decisions": [
     {
-      "timestamp": "2026-03-18T19:30:06.275983+00:00",
+      "timestamp": "2026-03-18T20:04:29.821233+00:00",
       "phase": "decomposing",
       "decision_type": "decomposition_complete",
-      "decision": "Produced 14 tasks",
+      "decision": "Produced 11 tasks",
       "reasoning": "Goal complexity drove task count"
+    },
+    {
+      "timestamp": "2026-03-18T20:04:29.861856+00:00",
+      "phase": "executing",
+      "decision_type": "parallel_safety_split",
+      "decision": "Serialized 6 tasks due to AST conflicts",
+      "reasoning": "Parallel: [], Serialized: ['task-1', 'task-2', 'task-3', 'task-4', 'task-5', 'task-6']"
+    },
+    {
+      "timestamp": "2026-03-18T20:24:03.698119+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-2 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T20:37:44.589916+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-4 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T20:47:44.640846+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-5 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T20:57:44.700203+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-6 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T20:57:45.542595+00:00",
+      "phase": "executing",
+      "decision_type": "parallel_safety_split",
+      "decision": "Serialized 6 tasks due to AST conflicts",
+      "reasoning": "Parallel: [], Serialized: ['task-2', 'task-4', 'task-5', 'task-6', 'task-7', 'task-8']"
+    },
+    {
+      "timestamp": "2026-03-18T21:16:36.029372+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-4 (attempt 2/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T21:26:36.102350+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-5 (attempt 2/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T21:43:51.651474+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-7 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
+    },
+    {
+      "timestamp": "2026-03-18T21:53:51.725514+00:00",
+      "phase": "executing",
+      "decision_type": "retry",
+      "decision": "Retrying task-8 (attempt 1/50)",
+      "reasoning": "Increase task timeout or split into smaller subtasks."
     }
   ],
-  "errors": [],
+  "errors": [
+    {
+      "timestamp": "2026-03-18T20:24:03.697976+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-2"
+    },
+    {
+      "timestamp": "2026-03-18T20:37:44.588723+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-4"
+    },
+    {
+      "timestamp": "2026-03-18T20:47:44.639520+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-5"
+    },
+    {
+      "timestamp": "2026-03-18T20:57:44.698829+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-6"
+    },
+    {
+      "timestamp": "2026-03-18T21:16:36.027751+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-4"
+    },
+    {
+      "timestamp": "2026-03-18T21:26:36.100263+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-5"
+    },
+    {
+      "timestamp": "2026-03-18T21:43:51.649562+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-7"
+    },
+    {
+      "timestamp": "2026-03-18T21:53:51.724207+00:00",
+      "message": "Task timed out after 600.0s",
+      "phase": "executing",
+      "task_id": "task-8"
+    }
+  ],
   "task_transition_log": [
     {
-      "timestamp": "2026-03-18T19:36:22.470662+00:00",
+      "timestamp": "2026-03-18T20:14:03.670398+00:00",
       "task_id": "task-1",
       "from_state": "running",
       "to_state": "done",
@@ -567,15 +614,71 @@
       "assigned_agent": "agent-task-1"
     },
     {
-      "timestamp": "2026-03-18T19:36:22.471648+00:00",
-      "task_id": "task-5",
+      "timestamp": "2026-03-18T20:24:03.698109+00:00",
+      "task_id": "task-2",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
+      "assigned_agent": "agent-task-2"
+    },
+    {
+      "timestamp": "2026-03-18T20:27:44.550507+00:00",
+      "task_id": "task-3",
       "from_state": "running",
       "to_state": "done",
       "reason": "completed successfully",
+      "assigned_agent": "agent-task-3"
+    },
+    {
+      "timestamp": "2026-03-18T20:37:44.589699+00:00",
+      "task_id": "task-4",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
+      "assigned_agent": "agent-task-4"
+    },
+    {
+      "timestamp": "2026-03-18T20:47:44.640833+00:00",
+      "task_id": "task-5",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
       "assigned_agent": "agent-task-5"
     },
     {
-      "timestamp": "2026-03-18T19:36:22.471864+00:00",
+      "timestamp": "2026-03-18T20:57:44.700024+00:00",
+      "task_id": "task-6",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
+      "assigned_agent": "agent-task-6"
+    },
+    {
+      "timestamp": "2026-03-18T21:06:35.933215+00:00",
+      "task_id": "task-2",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-2"
+    },
+    {
+      "timestamp": "2026-03-18T21:16:36.029015+00:00",
+      "task_id": "task-4",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 2/50",
+      "assigned_agent": "agent-task-4"
+    },
+    {
+      "timestamp": "2026-03-18T21:26:36.102160+00:00",
+      "task_id": "task-5",
+      "from_state": "running",
+      "to_state": "pending",
+      "reason": "retry attempt 2/50",
+      "assigned_agent": "agent-task-5"
+    },
+    {
+      "timestamp": "2026-03-18T21:33:51.438591+00:00",
       "task_id": "task-6",
       "from_state": "running",
       "to_state": "done",
@@ -583,28 +686,20 @@
       "assigned_agent": "agent-task-6"
     },
     {
-      "timestamp": "2026-03-18T19:36:22.471980+00:00",
+      "timestamp": "2026-03-18T21:43:51.651285+00:00",
       "task_id": "task-7",
       "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
       "assigned_agent": "agent-task-7"
     },
     {
-      "timestamp": "2026-03-18T19:36:22.472084+00:00",
+      "timestamp": "2026-03-18T21:53:51.725178+00:00",
       "task_id": "task-8",
       "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
+      "to_state": "pending",
+      "reason": "retry attempt 1/50",
       "assigned_agent": "agent-task-8"
-    },
-    {
-      "timestamp": "2026-03-18T19:36:22.472173+00:00",
-      "task_id": "task-9",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-9"
     }
   ],
   "git_branch": "attoswarm/09202efb"

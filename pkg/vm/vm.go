@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/ryx-lang/ryx/pkg/codegen"
 )
@@ -185,6 +186,7 @@ func (vm *VM) execute(fiber *Fiber) error {
 		case codegen.OpConstString:
 			idx := readU16(code, ip+1)
 			s := vm.Program.StringPool[idx]
+			s = unquoteString(s)
 			heapIdx := vm.Heap.AllocString(s)
 			fiber.Push(ObjVal(heapIdx))
 			frame.IP = ip + 3
@@ -1011,6 +1013,25 @@ func (vm *VM) resolveString(v Value) string {
 		}
 	}
 	return StringValue(v, vm.Heap)
+}
+
+// unquoteString strips surrounding quotes from string literals stored by the
+// lexer. It handles regular "..." strings (with Go-compatible escape sequences)
+// and raw r"..." strings (no escape processing).
+func unquoteString(s string) string {
+	// Regular string: "..."
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		if u, err := strconv.Unquote(s); err == nil {
+			return u
+		}
+		// Fallback: strip quotes without escape processing
+		return s[1 : len(s)-1]
+	}
+	// Raw string: r"..."
+	if len(s) >= 3 && strings.HasPrefix(s, `r"`) && s[len(s)-1] == '"' {
+		return s[2 : len(s)-1]
+	}
+	return s
 }
 
 func tagName(tag byte) string {

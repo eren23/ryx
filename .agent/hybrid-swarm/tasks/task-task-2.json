@@ -1,23 +1,31 @@
 {
   "task_id": "task-2",
-  "title": "MapObj value trait implementations",
-  "description": "Add *MapObj cases to all trait functions in pkg/vm/builtins.go.\n\n1. In Equal() (via the Value.Equal method in value.go): Add case *MapObj that compares Count, then iterates sa.Buckets checking that sb has matching key\u2192value pairs.\n\n2. In StringValue() (value.go): Add case *MapObj that renders as \"{key1: val1, key2: val2}\" or \"{}\" for empty.\n\n3. In displayObject() (builtins.go): Add case *MapObj with same format but using displayValue for keys/values.\n\n4. In deepClone() (builtins.go): Add case *MapObj that deep-clones all bucket entries' keys and values, allocates a new MapObj via heap.Alloc.\n\n5. In hashValue() (builtins.go): Add case *MapObj that XORs hashes of all entries for order-independent hashing.\n\n6. In deepCompare() (builtins.go): Add case *MapObj that compares by Count (maps with same count are equal in ordering).\n\nSee goal spec section 1.6 for exact implementations of each case.",
-  "status": "pending",
+  "title": "Fix closure/lambda codegen function resolution",
+  "description": "E2E tests closures.ryx and generics_complex.ryx fail with 'unknown function make_adder$lambda0 in closure' and 'unknown function main$lambda0 in closure'. The codegen phase in pkg/codegen/codegen.go cannot find lambda functions when generating MAKE_CLOSURE instructions. The issue is likely that lambda functions lowered during HIR/monomorphization are not being registered in the function table before codegen tries to reference them. Trace the path: HIR lower.go creates lambda function names \u2192 codegen.go looks them up. Fix the codegen to properly discover and register lambda functions from the HIR output, or fix the HIR lowering to ensure lambda functions are included in the function list passed to codegen.",
+  "status": "done",
   "task_kind": "implement",
-  "role_hint": "impl-claude",
-  "deps": [
-    "task-1"
-  ],
+  "role_hint": "impl",
+  "deps": [],
   "target_files": [
-    "pkg/vm/builtins.go"
+    "pkg/codegen/codegen.go",
+    "pkg/hir/lower.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "",
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"ca095b11-b6f3-4450-9a12-549305ddf557\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"d8d850ae-31df-4b65-8469-d4ed158e0351\",\"session_id\":\"c312a358-bd2a-4a14-8f50-26dfaaff3a35\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"ca095b11-b6f3-4450-9a12-549305ddf557\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
   "symbol_scope": [],
-  "tokens_used": 0,
+  "tokens_used": 8923,
   "cost_usd": 0.0,
-  "attempt_count": 0,
-  "attempt_history": [],
+  "attempt_count": 1,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-18T20:24:03.698075+00:00",
+      "duration_s": 600.007985830307,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
   "has_diff": false
 }

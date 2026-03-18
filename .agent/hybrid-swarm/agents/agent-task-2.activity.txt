@@ -1,1 +1,1 @@
-Everything is working correctly. Here's a summary of what wa
+All 24 programs compile successfully. The closure/lambda cod

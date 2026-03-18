@@ -1,22 +1,5 @@
-# Task: Time and random stdlib functions
+# Task: Fix array index out of bounds in VM execution
 
-Create new file pkg/stdlib/time_ops.go with 5 functions.
+E2E tests game_of_life.ryx and graph_bfs.ryx fail with 'runtime error: index 25 out of bounds (length 25)' and 'index 10 out of bounds (length 10)'. These are off-by-one errors where the programs use 0-based indexing but are accessing index N for an array of length N. This could be in how range expressions (0..N) are compiled - the upper bound may be inclusive when it should be exclusive, causing iteration to go one past the end. Check how 'for i in 0..N' is desugared in HIR (pkg/hir/lower.go) - specifically whether the range end bound is exclusive (..) vs inclusive (..=). If the desugared while loop uses <= instead of < for '..' ranges, fix it to use strict less-than comparison.
 
-Package-level state:
-- var rng *rand.Rand with sync.Mutex protection
-- init() function that seeds rng with time.Now().UnixNano()
-
-Functions:
-1. TimeNowMs: 0 args, returns IntVal(time.Now().UnixMilli())
-2. SleepMs: 1 Int arg, errors if ms < 0, calls time.Sleep(Duration(ms)*Millisecond)
-3. RandomSeed: 1 Int arg, resets rng = rand.New(rand.NewSource(seed)) under lock
-4. RandomShuffle: 1 array arg, copies elements, Fisher-Yates shuffle using rng under lock, returns NEW array
-5. RandomChoice: 1 non-empty array arg, returns random element using rng.Intn under lock, errors on empty array
-
-IMPORTANT: The existing RandomInt and RandomFloat in math_ops.go use math/rand/v2 global state. These should ideally use the shared rng, but to avoid file conflicts, note this as a TODO in comments. The new random functions must use the package-level rng with mutex.
-
-Use the existing resolveArray helper from array_ops.go (same package, so it's accessible).
-
-Imports needed: "fmt", "math/rand", "sync", "time", "github.com/ryx-lang/ryx/pkg/vm"
-
-Target files: pkg/stdlib/time_ops.go
+Target files: pkg/hir/lower.go

@@ -1,21 +1,40 @@
 {
   "task_id": "task-5",
-  "title": "Math stdlib expansion",
-  "description": "Add 16 new math functions to pkg/stdlib/math_ops.go.\n\nAll follow the existing pattern using toFloat() helper for auto-promotion.\n\nTrigonometric (all 1-arg, return Float):\n- Sin, Cos, Tan, Asin, Acos, Atan: wrap math.Sin/Cos/Tan/Asin/Acos/Atan(toFloat(args[0]))\n- Atan2: 2 args, math.Atan2(toFloat(args[0]), toFloat(args[1]))\n\nLogarithmic/Exponential (all 1-arg, return Float):\n- Log, Log2, Log10, Exp: wrap corresponding math.* functions\n\nConstants (0-arg, return Float):\n- Pi: returns FloatVal(math.Pi)\n- E: returns FloatVal(math.E)\n\nInteger math:\n- Gcd: 2 Int args, Euclidean algorithm with absolute values\n- Lcm: 2 Int args, lcm(a,b) = |a|/gcd(a,b)*|b|, returns 0 if either is 0\n- Clamp: 3 args (x, lo, hi). If all Int, use Int comparison. Otherwise promote to Float.\n\nSee goal spec section 4 for exact implementations and edge case handling.",
-  "status": "done",
+  "title": "Fix VM stack underflow panics in arithmetic operations",
+  "description": "E2E tests fibonacci.ryx, quicksort.ryx, and matrix_multiply.ryx crash with Go-level panics: 'index out of range [-1]' in fiber.go:89 (Pop) and 'index out of range [1] with length 1'. These indicate the VM is trying to pop from an empty stack or access stack positions that don't exist. This means the bytecode being generated has mismatched push/pop counts for some operation sequences. Common causes: binary operations not finding both operands on stack, function calls not properly setting up arguments, or return values not being handled correctly. Debug by examining the bytecode generated for fibonacci.ryx (a simple case) and tracing the stack state. Fix the codegen to emit correct stack-balanced bytecode.",
+  "status": "pending",
   "task_kind": "implement",
-  "role_hint": "impl-codex",
+  "role_hint": "impl",
   "deps": [],
   "target_files": [
-    "pkg/stdlib/math_ops.go"
+    "pkg/codegen/codegen.go",
+    "pkg/vm/vm.go",
+    "pkg/vm/fiber.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "{\"type\":\"thread.started\",\"thread_id\":\"019d026d-41ce-7191-a8f3-9c387f350708\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I\u2019m checking the existing stdlib math operator patterns in `pkg/stdlib/math_ops.go` first so the new functions match the current calling, typing, and registration style.\"}}\n{\"type\":\"item.started\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/math_ops.go\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"sed -n '1,260p' pkg/stdlib/math_ops.go\\\"\",\"aggregated_output\":\"package stdlib\\n\\nimport (\\n\\t\\\"fmt\\\"\\n\\t\\\"math\\\"\\n\\t\\\"math/rand/v2\\\"\\n\\n\\t\\\"github.com/ryx-lang/ryx/pkg/vm\\\"\\n)\\n\\n// ---------------------------------------------------------------------------\\n// Math operations \u2014 work on Int and Float values\\n// ---------------------------------------------------------------------------\\n\\n// Abs returns the absolute value of an Int or Float.\\nfunc Abs(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"abs: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\tswitch args[0].Tag {\\n\\tcase vm.TagInt:\\n\\t\\tv := args[0].AsInt()\\n\\t\\tif v < 0 {\\n\\t\\t\\tv = -v\\n\\t\\t}\\n\\t\\treturn vm.IntVal(v), nil\\n\\tcase vm.TagFloat:\\n\\t\\treturn vm.FloatVal(math.Abs(args[0].AsFloat())), nil\\n\\tdefault:\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"abs: expected Int or Float, got tag %d\\\", args[0].Tag)\\n\\t}\\n}\\n\\n// Min returns the minimum of two Int or Float values.\\nfunc Min(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"min: expected 2 arguments, got %d\\\", len(args))\\n\\t}\\n\\tif args[0].Tag == vm.TagInt && args[1].Tag == vm.TagInt {\\n\\t\\ta, b := args[0].AsInt(), args[1].AsInt()\\n\\t\\tif a < b {\\n\\t\\t\\treturn vm.IntVal(a), nil\\n\\t\\t}\\n\\t\\treturn vm.IntVal(b), nil\\n\\t}\\n\\tif args[0].Tag == vm.TagFloat && args[1].Tag == vm.TagFloat {\\n\\t\\treturn vm.FloatVal(math.Min(args[0].AsFloat(), args[1].AsFloat())), nil\\n\\t}\\n\\t// Mixed: promote Int to Float.\\n\\ta := toFloat(args[0])\\n\\tb := toFloat(args[1])\\n\\treturn vm.FloatVal(math.Min(a, b)), nil\\n}\\n\\n// Max returns the maximum of two Int or Float values.\\nfunc Max(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"max: expected 2 arguments, got %d\\\", len(args))\\n\\t}\\n\\tif args[0].Tag == vm.TagInt && args[1].Tag == vm.TagInt {\\n\\t\\ta, b := args[0].AsInt(), args[1].AsInt()\\n\\t\\tif a > b {\\n\\t\\t\\treturn vm.IntVal(a), nil\\n\\t\\t}\\n\\t\\treturn vm.IntVal(b), nil\\n\\t}\\n\\tif args[0].Tag == vm.TagFloat && args[1].Tag == vm.TagFloat {\\n\\t\\treturn vm.FloatVal(math.Max(args[0].AsFloat(), args[1].AsFloat())), nil\\n\\t}\\n\\ta := toFloat(args[0])\\n\\tb := toFloat(args[1])\\n\\treturn vm.FloatVal(math.Max(a, b)), nil\\n}\\n\\n// Sqrt returns the square root of an Int or Float. Always returns Float.\\nfunc Sqrt(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"sqrt: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\tv := toFloat(args[0])\\n\\treturn vm.FloatVal(math.Sqrt(v)), nil\\n}\\n\\n// Pow returns base raised to exponent. Always returns Float.\\nfunc Pow(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 2 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"pow: expected 2 arguments, got %d\\\", len(args))\\n\\t}\\n\\tbase := toFloat(args[0])\\n\\texp := toFloat(args[1])\\n\\treturn vm.FloatVal(math.Pow(base, exp)), nil\\n}\\n\\n// Floor returns the greatest integer value less than or equal to a Float.\\nfunc Floor(args []vm.Value, heap *vm.Heap) (vm.Value, error) {\\n\\tif len(args) != 1 {\\n\\t\\treturn vm.UnitVal(), fmt.Errorf(\\\"floor: expected 1 argument, got %d\\\", len(args))\\n\\t}\\n\\tv := toFloat(args[0])\\n\\treturn vm.FloatVal(math.Floor(v)), nil\\n}\\n\\n// C",
+  "result_summary": "",
   "symbol_scope": [],
   "tokens_used": 0,
   "cost_usd": 0.0,
-  "attempt_count": 0,
-  "attempt_history": [],
+  "attempt_count": 2,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-18T20:47:44.640433+00:00",
+      "duration_s": 600.0122261047363,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 2,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-18T21:26:36.101570+00:00",
+      "duration_s": 600.0300049781799,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
   "has_diff": false
 }

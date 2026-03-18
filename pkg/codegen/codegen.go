@@ -248,7 +248,7 @@ func (g *generator) compileFunction(fn *mir.Function) error {
 		NameIdx:         uint32(nameIdx),
 		Arity:           uint16(len(fn.Params)),
 		LocalsCount:     slot,
-		UpvalueCount:    0,
+		UpvalueCount:    uint16(fn.UpvalueCount),
 		MaxStack:        uint16(g.maxStack),
 		CodeOffset:      uint32(codeStart),
 		CodeLength:      uint32(codeLen),
@@ -354,9 +354,21 @@ func (g *generator) emitStmt(stmt mir.Stmt) error {
 					g.emitValue(arg)
 				}
 				EmitOp(&g.code, op)
-				g.adjustStack(-len(s.Args) + 1)
-				if s.Dest != mir.NoLocal {
-					g.emitStoreLocal(s.Dest)
+				if voidBuiltins[glob.Name] {
+					// Void builtins (print/println) consume args but push nothing.
+					g.adjustStack(-len(s.Args))
+					if s.Dest != mir.NoLocal {
+						// Push unit as the "result" so StoreLocal has something to pop.
+						EmitOp(&g.code, OpConstUnit)
+						g.adjustStack(1)
+						g.emitStoreLocal(s.Dest)
+					}
+				} else {
+					// Non-void builtins consume args and push one result.
+					g.adjustStack(-len(s.Args) + 1)
+					if s.Dest != mir.NoLocal {
+						g.emitStoreLocal(s.Dest)
+					}
 				}
 				break
 			}
@@ -551,15 +563,19 @@ func (g *generator) emitTerminator(bb *mir.BasicBlock) error {
 
 	case *mir.Branch:
 		g.emitValue(t.Cond)
-		// Emit phi moves for the then-branch and else-branch at their respective
-		// targets. For now, we emit a conditional jump and an unconditional fallthrough.
-		// Strategy: JUMP_IF_FALSE to else, fall through to then.
-		elseJumpOff := g.emitJumpPlaceholder(OpJumpIfFalse, t.Else)
-		_ = elseJumpOff
+		// Strategy: JUMP_IF_FALSE to else phi moves, fall through to then.
+		// We emit a raw placeholder (not block-targeted) so the false branch
+		// lands on the inline else phi moves rather than skipping them.
+		EmitI16(&g.code, OpJumpIfFalse, 0)
+		elsePatchOff := len(g.code) - 2
 		g.adjustStack(-1) // condition consumed
 		g.emitPhiMoves(bb.ID, t.Then)
 		g.emitJump(OpJump, t.Then)
-		// Else target will be patched; also emit phi moves for else.
+		// Patch JUMP_IF_FALSE to land here (else phi moves).
+		elseOff := len(g.code)
+		rel := elseOff - (elsePatchOff + 2)
+		g.code[elsePatchOff] = byte(uint16(int16(rel)))
+		g.code[elsePatchOff+1] = byte(uint16(int16(rel)) >> 8)
 		g.emitPhiMoves(bb.ID, t.Else)
 		g.emitJump(OpJump, t.Else)
 
@@ -599,15 +615,22 @@ func (g *generator) emitTerminator(bb *mir.BasicBlock) error {
 }
 
 // emitPhiMoves stores values into phi destination locals for edges from src to dst.
+// Uses parallel move semantics: all source values are pushed first, then stored
+// in reverse order. This prevents the "lost copy" problem where storing one phi
+// dest overwrites a value needed by a subsequent phi arg.
 func (g *generator) emitPhiMoves(src mir.BlockID, dst mir.BlockID) {
 	dstBlock := g.curFunc.Block(dst)
+	var slots []uint16
 	for _, phi := range dstBlock.Phis {
 		if val, ok := phi.Args[src]; ok {
 			g.emitValue(val)
-			slot := g.localSlots[phi.Dest]
-			EmitU16(&g.code, OpStoreLocal, slot)
-			g.adjustStack(-1)
+			slots = append(slots, g.localSlots[phi.Dest])
 		}
+	}
+	// Store in reverse order (LIFO) to match stack push order.
+	for i := len(slots) - 1; i >= 0; i-- {
+		EmitU16(&g.code, OpStoreLocal, slots[i])
+		g.adjustStack(-1)
 	}
 }
 
@@ -667,11 +690,35 @@ func (g *generator) emitValue(v mir.Value) {
 			idx := g.internString(val.Str)
 			EmitU16(&g.code, OpConstString, idx)
 		case mir.ConstChar:
-			// Char is stored as string in MIR; encode as first rune.
+			// Char is stored as string in MIR with surrounding quotes (e.g. "'x'").
+			// Strip quotes and handle escape sequences to extract the rune.
+			s := val.Str
+			if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+				s = s[1 : len(s)-1]
+			}
 			r := rune(0)
-			for _, c := range val.Str {
-				r = c
-				break
+			if len(s) > 0 && s[0] == '\\' && len(s) > 1 {
+				switch s[1] {
+				case 'n':
+					r = '\n'
+				case 't':
+					r = '\t'
+				case 'r':
+					r = '\r'
+				case '\\':
+					r = '\\'
+				case '\'':
+					r = '\''
+				case '0':
+					r = 0
+				default:
+					r = rune(s[1])
+				}
+			} else {
+				for _, c := range s {
+					r = c
+					break
+				}
 			}
 			EmitU32(&g.code, OpConstChar, uint32(r))
 		case mir.ConstUnit:
@@ -686,6 +733,10 @@ func (g *generator) emitValue(v mir.Value) {
 			idx := g.internString(val.Name)
 			EmitU16(&g.code, OpLoadGlobal, idx)
 		}
+		g.adjustStack(1)
+
+	case *mir.Upvalue:
+		EmitU16(&g.code, OpLoadUpvalue, uint16(val.Index))
 		g.adjustStack(1)
 	}
 }
