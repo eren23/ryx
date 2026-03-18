@@ -1,0 +1,5 @@
+items: 1
+errors: 0
+
+--- items ---
+[0] fn main(0 params) { 54 stmts } [51..1870)

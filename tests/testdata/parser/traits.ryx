@@ -1,0 +1,94 @@
+// Traits and impl blocks — all forms
+
+// Simple trait
+trait Show {
+    fn show(self) -> String;
+}
+
+// Trait with multiple methods
+trait Collection {
+    fn len(self) -> Int;
+    fn is_empty(self) -> Bool;
+    fn contains(self, item: Int) -> Bool;
+}
+
+// Trait with default method
+trait Greet {
+    fn name(self) -> String;
+    fn greet(self) -> String { "hello" }
+}
+
+// Generic trait
+trait Functor<A> {
+    fn map<B>(self, f: (A) -> B) -> Self;
+}
+
+// Trait with Self return type
+trait Clone {
+    fn clone(self) -> Self;
+}
+
+// Public trait
+pub trait Serializable {
+    fn serialize(self) -> String;
+    fn deserialize(data: String) -> Self;
+}
+
+// Inherent impl
+impl Point {
+    fn new(x: Float, y: Float) -> Point {
+        Point { x: x, y: y }
+    }
+
+    fn distance(self) -> Float {
+        self.x * self.x + self.y * self.y
+    }
+
+    pub fn origin() -> Point {
+        Point { x: 0.0, y: 0.0 }
+    }
+}
+
+// Trait impl
+impl Show for Point {
+    fn show(self) -> String {
+        "Point"
+    }
+}
+
+// Generic trait impl
+impl<T: Show> Show for Vec<T> {
+    fn show(self) -> String {
+        "Vec"
+    }
+}
+
+// Impl for generic type
+impl<T> Option<T> {
+    fn unwrap(self) -> T {
+        match self {
+            Some(val) => val,
+            None => {
+                panic("unwrap on None")
+            },
+        }
+    }
+
+    fn is_some(self) -> Bool {
+        match self {
+            Some(_) => true,
+            None => false,
+        }
+    }
+}
+
+// Trait with bounds
+trait Summable {
+    fn zero() -> Self;
+    fn add(self, other: Self) -> Self;
+}
+
+impl Summable for Int {
+    fn zero() -> Int { 0 }
+    fn add(self, other: Int) -> Int { self + other }
+}

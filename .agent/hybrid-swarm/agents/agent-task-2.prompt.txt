@@ -1,0 +1,5 @@
+# Task: Hand-written lexer with full token coverage
+
+Implement pkg/lexer/lexer.go: single-pass, character-by-character scanner producing token stream. Support all 52 token types. Handle integer literal bases (decimal, hex 0x, binary 0b, octal 0o) with underscore separators. Float literals with exponents. String escapes (\n, \t, \r, \\, \", \0, \u{XXXX}), raw strings r"...". Char literals including Unicode escapes. Nested block comments /* /* */ */. Line comments //. UTF-8 aware identifiers (Unicode L* categories). Contextual self keyword. ERROR token for malformed input (never panic). Track line, column, byte offset for every token. Write lexer_test.go covering all token types, edge cases, error recovery, and golden file test infrastructure in tests/testdata/lexer/.
+
+Target files: pkg/lexer/lexer.go, pkg/lexer/lexer_test.go, tests/testdata/lexer/literals.vex, tests/testdata/lexer/operators.vex, tests/testdata/lexer/keywords.vex, tests/testdata/lexer/strings.vex, tests/testdata/lexer/comments.vex, tests/testdata/lexer/unicode.vex, tests/testdata/lexer/errors.vex, tests/integration/lexer_golden_test.go

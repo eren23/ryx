@@ -1,0 +1,38 @@
+// Function definitions — all forms
+
+fn simple() {}
+
+fn with_params(a: Int, b: Int) {}
+
+fn with_return() -> Int { 42 }
+
+fn full(a: Int, b: Int) -> Int { a + b }
+
+pub fn public_fn() {}
+
+fn trailing_comma(a: Int, b: Int,) -> Int { a + b }
+
+fn no_body_signature(x: Int) -> Int;
+
+fn multi_line(
+    a: Int,
+    b: Int,
+    c: Int,
+) -> Int {
+    a + b + c
+}
+
+fn nested_calls() {
+    let result = foo(bar(baz(1)));
+    result;
+}
+
+fn complex_body() -> Int {
+    let x = 10;
+    let y = 20;
+    if x > y {
+        x
+    } else {
+        y
+    }
+}

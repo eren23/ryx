@@ -1,0 +1,31 @@
+// Test: escape analysis pass
+// Determines whether allocations can be stack-allocated.
+
+fn escape_test() -> Int {
+  bb0 (entry):
+    // Local struct: only field accessed, struct not returned -> stack
+    %0 = struct Point { x: 1, y: 2 }
+    %1 = %0.x
+
+    // Returned struct: escapes -> heap
+    %2 = struct Point { x: 3, y: 4 }
+
+    // Array passed to call: escapes -> heap
+    %3 = array [1, 2, 3]
+    %4 = call @consume(%3)
+
+    return %1
+}
+
+// After escape analysis:
+// %0 (Point): does NOT escape (stack allocation candidate)
+// %2 (Point): does NOT escape (not returned, not passed to call)
+// %3 (array): ESCAPES (passed to function call)
+//
+// Note: %2 does not escape in this example because it is never
+// returned or passed to a call. Only %3 escapes.
+
+--- EXPECTED ESCAPES ---
+%0: stack
+%2: stack
+%3: heap

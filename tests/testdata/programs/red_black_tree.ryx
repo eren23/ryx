@@ -1,0 +1,49 @@
+// Binary search tree with insert, count, and min operations
+
+type BST {
+    Empty,
+    Node(BST, Int, BST),
+}
+
+fn insert(tree: BST, val: Int) -> BST {
+    match tree {
+        Empty => Node(Empty, val, Empty),
+        Node(left, v, right) => {
+            if val < v {
+                Node(insert(left, val), v, right)
+            } else if val > v {
+                Node(left, v, insert(right, val))
+            } else {
+                Node(left, v, right)
+            }
+        },
+    }
+}
+
+fn count(tree: BST) -> Int {
+    match tree {
+        Empty => 0,
+        Node(left, _, right) => count(left) + 1 + count(right),
+    }
+}
+
+fn min_val(tree: BST) -> Int {
+    match tree {
+        Empty => -1,
+        Node(Empty, v, _) => v,
+        Node(left, _, _) => min_val(left),
+    }
+}
+
+fn main() {
+    let mut t = Empty;
+    t = insert(t, 5);
+    t = insert(t, 3);
+    t = insert(t, 7);
+    t = insert(t, 1);
+    t = insert(t, 9);
+    t = insert(t, 4);
+    t = insert(t, 6);
+    println(count(t));
+    println(min_val(t))
+}

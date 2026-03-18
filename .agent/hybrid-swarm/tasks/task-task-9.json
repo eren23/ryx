@@ -1,0 +1,39 @@
+{
+  "task_id": "task-9",
+  "title": "VM core with dispatch loop, fibers, scheduler, and channels",
+  "description": "Implement pkg/vm/value.go: Value struct (Tag byte + Data uint64), HeapObject with ObjectHeader (TypeID, GCMark, Size), payload types (StringObj, ArrayObj, StructObj, EnumObj, ClosureObj with UpvalueCell open/closed semantics, ChannelObj with buffer/senders/receivers). Implement pkg/vm/fiber.go: Fiber struct (ID, CallFrame stack max 1024, Value operand stack max 65536, SP, State enum Running/Suspended/Blocked/Dead, BlockedOn, Error). Implement pkg/vm/channel.go: CSP channel semantics (buffered/unbuffered, send blocks when full, recv blocks when empty, rendezvous for cap=0, close semantics, for-in draining). Implement pkg/vm/scheduler.go: cooperative M:1 green thread scheduler (round-robin FIFO ready queue, 4096-instruction timeslice, blocked fiber management, deadlock detection when all fibers blocked). Implement pkg/vm/error.go: runtime error types with source location and stack trace builder. Implement pkg/vm/vm.go: VM struct, dispatch loop (switch on opcode, decode operands, execute, advance IP), all 68 instruction implementations, stack overflow/call depth/div-by-zero/index-OOB checks with source locations. Write vm_test.go: per-opcode unit tests, function calls, recursion, tail calls, closures with upvalue closing, data structures, pattern matching dispatch, channel operations, fiber scheduling, deadlock detection, error reporting with stack traces.",
+  "status": "done",
+  "task_kind": "implement",
+  "role_hint": "runtime",
+  "deps": [
+    "task-8"
+  ],
+  "target_files": [
+    "pkg/vm/value.go",
+    "pkg/vm/fiber.go",
+    "pkg/vm/channel.go",
+    "pkg/vm/scheduler.go",
+    "pkg/vm/error.go",
+    "pkg/vm/vm.go",
+    "pkg/vm/heap.go",
+    "pkg/vm/vm_test.go"
+  ],
+  "read_files": [],
+  "files_modified": [],
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e8364209-7a14-43e5-8aeb-6fecbeac5cd3\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"657c227c-a446-4225-a043-8df8cf43e320\",\"session_id\":\"23c20cc0-49f8-4cc6-8981-3d9278c59d2c\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"e8364209-7a14-43e5-8aeb-6fecbeac5cd3\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "symbol_scope": [],
+  "tokens_used": 1019,
+  "cost_usd": 0.0,
+  "attempt_count": 1,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T21:44:19.945817+00:00",
+      "duration_s": 600.0024440288544,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
+  "has_diff": false
+}

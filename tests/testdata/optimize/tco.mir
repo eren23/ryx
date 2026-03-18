@@ -1,0 +1,45 @@
+// Test: tail call optimization pass
+// Self-recursive tail call should be transformed into a loop.
+
+fn sum(n: Int, acc: Int) -> Int {
+  // locals:
+  //   %0: Int  (n)
+  //   %1: Int  (acc)
+
+  bb0 (entry):
+    %2 = %0 == 0
+    branch %2, bb1, bb2
+
+  bb1 (base):
+    return %1
+
+  bb2 (rec):
+    %3 = %0 - 1
+    %4 = %1 + %0
+    %5 = call @sum(%3, %4)
+    return %5
+}
+
+// After TCO pass:
+// Entry block content moves to tco.header.
+// Recursive call in bb2 becomes: assign args to params + goto tco.header.
+
+--- EXPECTED ---
+fn sum(n: Int, acc: Int) -> Int {
+  bb0 (entry):
+    goto bb3
+
+  bb3 (tco.header):
+    %2 = %0 == 0
+    branch %2, bb1, bb2
+
+  bb1 (base):
+    return %1
+
+  bb2 (rec):
+    %3 = %0 - 1
+    %4 = %1 + %0
+    %0 = %3
+    %1 = %4
+    goto bb3
+}

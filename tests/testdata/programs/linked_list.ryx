@@ -1,0 +1,26 @@
+// Linked list using algebraic data types
+
+type List {
+    Cons(Int, List),
+    Nil,
+}
+
+fn length(list: List) -> Int {
+    match list {
+        Nil => 0,
+        Cons(_, rest) => 1 + length(rest),
+    }
+}
+
+fn sum(list: List) -> Int {
+    match list {
+        Nil => 0,
+        Cons(head, rest) => head + sum(rest),
+    }
+}
+
+fn main() {
+    let list = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))));
+    println(length(list));
+    println(sum(list))
+}

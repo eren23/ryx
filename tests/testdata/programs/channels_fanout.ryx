@@ -1,0 +1,27 @@
+// Fan-out channel pattern with multiple workers
+
+fn worker(id: Int, input: channel<Int>, output: channel<Int>) {
+    let val = input.recv();
+    output.send(val * id);
+}
+
+fn main() {
+    let input = channel<Int>(3);
+    let output = channel<Int>(3);
+
+    spawn { worker(1, input, output) };
+    spawn { worker(2, input, output) };
+    spawn { worker(3, input, output) };
+
+    input.send(10);
+    input.send(10);
+    input.send(10);
+
+    let mut total = 0;
+    let mut i = 0;
+    while i < 3 {
+        total = total + output.recv();
+        i = i + 1;
+    };
+    println(total)
+}

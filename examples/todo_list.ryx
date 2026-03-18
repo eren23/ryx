@@ -1,0 +1,33 @@
+// Todo List - demonstrates structs and mutable state
+
+struct Todo {
+    id: Int,
+    title: String,
+    done: Bool,
+}
+
+fn count_done(todos: [Todo], n: Int) -> Int {
+    let mut count = 0;
+    let mut i = 0;
+    while i < n {
+        if todos[i].done {
+            count = count + 1;
+        };
+        i = i + 1;
+    };
+    count
+}
+
+fn main() {
+    let mut todos = [
+        Todo { id: 1, title: "Learn Ryx", done: true },
+        Todo { id: 2, title: "Build a project", done: false },
+        Todo { id: 3, title: "Write tests", done: true },
+    ];
+
+    println(count_done(todos, 3));
+
+    // Mark second todo as done
+    todos[1].done = true;
+    println(count_done(todos, 3))
+}

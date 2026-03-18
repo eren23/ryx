@@ -1,0 +1,57 @@
+// Expression Evaluator - demonstrates closures and higher-order functions
+
+fn apply_op(op: Int, a: Int, b: Int) -> Int {
+    if op == 0 { a + b }
+    else if op == 1 { a - b }
+    else if op == 2 { a * b }
+    else if op == 3 {
+        if b == 0 { 0 } else { a / b }
+    }
+    else { 0 }
+}
+
+fn main() {
+    // Evaluate: ((3 + 4) * 2) - 1
+    // Using a stack-based approach
+    let mut stack = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut sp = 0;
+
+    // Push 3
+    stack[sp] = 3;
+    sp = sp + 1;
+    // Push 4
+    stack[sp] = 4;
+    sp = sp + 1;
+    // Add
+    sp = sp - 1;
+    let b = stack[sp];
+    sp = sp - 1;
+    let a = stack[sp];
+    stack[sp] = apply_op(0, a, b);
+    sp = sp + 1;
+
+    // Push 2
+    stack[sp] = 2;
+    sp = sp + 1;
+    // Multiply
+    sp = sp - 1;
+    let b2 = stack[sp];
+    sp = sp - 1;
+    let a2 = stack[sp];
+    stack[sp] = apply_op(2, a2, b2);
+    sp = sp + 1;
+
+    // Push 1
+    stack[sp] = 1;
+    sp = sp + 1;
+    // Subtract
+    sp = sp - 1;
+    let b3 = stack[sp];
+    sp = sp - 1;
+    let a3 = stack[sp];
+    stack[sp] = apply_op(1, a3, b3);
+    sp = sp + 1;
+
+    // Result
+    println(stack[0])
+}

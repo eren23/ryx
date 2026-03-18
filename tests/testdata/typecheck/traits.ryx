@@ -1,0 +1,81 @@
+// Trait definition and implementation tests
+
+// Basic trait definition
+trait Display {
+    fn display(self) -> String;
+}
+
+// Trait with multiple methods
+trait Shape {
+    fn area(self) -> Float;
+    fn perimeter(self) -> Float;
+}
+
+// Struct definitions
+struct Circle {
+    radius: Float,
+}
+
+struct Rectangle {
+    width: Float,
+    height: Float,
+}
+
+// Trait implementations
+impl Display for Circle {
+    fn display(self) -> String {
+        "Circle"
+    }
+}
+
+impl Shape for Circle {
+    fn area(self) -> Float {
+        self.radius * self.radius
+    }
+    fn perimeter(self) -> Float {
+        self.radius * 2.0
+    }
+}
+
+impl Display for Rectangle {
+    fn display(self) -> String {
+        "Rectangle"
+    }
+}
+
+impl Shape for Rectangle {
+    fn area(self) -> Float {
+        self.width * self.height
+    }
+    fn perimeter(self) -> Float {
+        (self.width + self.height) * 2.0
+    }
+}
+
+// Inherent impl
+impl Circle {
+    fn new(r: Float) -> Circle {
+        Circle { radius: r }
+    }
+}
+
+impl Rectangle {
+    fn new(w: Float, h: Float) -> Rectangle {
+        Rectangle { width: w, height: h }
+    }
+
+    fn is_square(self) -> Bool {
+        self.width == self.height
+    }
+}
+
+// Using traits
+fn print_area(s: Circle) -> Float {
+    s.radius * s.radius
+}
+
+fn main() {
+    let c = Circle { radius: 5.0 };
+    let r = Rectangle { width: 3.0, height: 4.0 };
+    let a1 = print_area(c);
+}

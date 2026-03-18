@@ -1,0 +1,58 @@
+// Generic type inference tests
+
+// Generic function (identity)
+fn identity<T>(x: T) -> T {
+    x
+}
+
+// Using identity with different types
+fn test_identity() {
+    let a = identity(42);
+    let b = identity("hello");
+    let c = identity(true);
+}
+
+// Generic pair struct
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn test_pair() {
+    let p = Pair { first: 1, second: "hello" };
+}
+
+// Higher-order generic function
+fn apply<T, U>(f: (T) -> U, x: T) -> U {
+    f(x)
+}
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn test_apply() -> Int {
+    apply(double, 21)
+}
+
+// Generic enum (Option-like)
+type Option<T> {
+    Some(T),
+    None,
+}
+
+fn test_option() {
+    let a = Some(42);
+    let b = None;
+}
+
+// Generic with multiple type params
+fn swap<A, B>(pair: Pair<A, B>) -> Pair<B, A> {
+    Pair { first: pair.second, second: pair.first }
+}
+
+// Nested generics
+fn map_option<T, U>(opt: Option<T>, f: (T) -> U) -> Option<U> {
+    match opt {
+        Some(x) => Some(f(x)),
+        None => None,
+    }
+}

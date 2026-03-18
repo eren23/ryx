@@ -1,0 +1,13 @@
+[book]
+title = "Ryx Documentation"
+description = "A statically typed, expression-oriented programming language implemented in Go"
+authors = ["ryx-lang"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+site-url = "/ryx/"
+git-repository-url = "https://github.com/ryx-lang/ryx"
+edit-url-template = "https://github.com/ryx-lang/ryx/edit/main/docs/{path}"

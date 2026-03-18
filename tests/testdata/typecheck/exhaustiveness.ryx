@@ -1,0 +1,74 @@
+// Exhaustiveness checking tests (handled by resolver, verified by type checker)
+
+type Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// Exhaustive match on enum
+fn color_name(c: Color) -> String {
+    match c {
+        Red => "red",
+        Green => "green",
+        Blue => "blue",
+    }
+}
+
+// Match with wildcard
+fn is_red(c: Color) -> Bool {
+    match c {
+        Red => true,
+        _ => false,
+    }
+}
+
+// Bool exhaustiveness
+fn bool_to_string(b: Bool) -> String {
+    match b {
+        true => "yes",
+        false => "no",
+    }
+}
+
+// Tuple pattern matching
+fn classify_pair(p: (Int, Bool)) -> String {
+    match p {
+        (0, true) => "zero-true",
+        (0, false) => "zero-false",
+        _ => "other",
+    }
+}
+
+// Nested enum matching
+type Expr {
+    Num(Int),
+    Add(Int, Int),
+    Neg(Int),
+}
+
+fn compute(e: Expr) -> Int {
+    match e {
+        Num(n) => n,
+        Add(a, b) => a + b,
+        Neg(n) => 0 - n,
+    }
+}
+
+// Match with guard
+fn classify_int(x: Int) -> String {
+    match x {
+        0 => "zero",
+        n if n > 0 => "positive",
+        _ => "negative",
+    }
+}
+
+fn main() {
+    let c = color_name(Red);
+    let b = is_red(Green);
+    let s = bool_to_string(true);
+    let p = classify_pair((1, true));
+    let e = compute(Num(42));
+    let i = classify_int(5);
+}

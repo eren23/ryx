@@ -1,0 +1,28 @@
+// Test: function inlining pass
+// Small callee function should be inlined into caller.
+
+fn double(x: Int) -> Int {
+  bb0 (entry):
+    %1 = %0 + %0
+    return %1
+}
+
+fn caller() -> Int {
+  bb0 (entry):
+    %0 = call @double(5)
+    return %0
+}
+
+// After inline pass (MaxStmts=8):
+// The call to @double is replaced with the inlined body.
+// Parameter %0 of double is mapped to constant 5.
+
+--- EXPECTED ---
+fn caller() -> Int {
+  bb0 (entry):
+    // inlined: param = 5, body = param + param
+    %1 = 5
+    %2 = %1 + %1
+    %0 = %2
+    return %0
+}

@@ -1,0 +1,27 @@
+items: 9
+errors: 0
+
+--- items ---
+[0] type Color { 3 variants } [71..115)
+  variant Red(0 fields)
+  variant Green(0 fields)
+  variant Blue(0 fields)
+[1] type Option<1 params> { 2 variants } [134..175)
+  variant Some(1 fields)
+  variant None(0 fields)
+[2] type Result<2 params> { 2 variants } [210..254)
+  variant Ok(1 fields)
+  variant Err(1 fields)
+[3] struct Point { 2 fields } [278..322)
+  field x
+  field y
+[4] struct Person { 3 fields } [324..400)
+  pub field name
+  pub field age
+  field email
+[5] pub struct PubStruct { 1 fields } [402..442)
+  field value
+[6] fn type_exprs(7 params) { 0 stmts } [487..652)
+[7] trait Factory { 1 methods } [667..709)
+  fn create(0 params) -> <type> ; [687..707)
+[8] fn unit(0 params) -> <type> { 0 stmts } [731..749)

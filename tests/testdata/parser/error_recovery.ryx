@@ -1,0 +1,32 @@
+// Error recovery — intentionally malformed code
+// The parser should recover and parse what it can
+
+// Missing function name
+fn () {}
+
+// Missing closing brace — parser should sync on next fn
+fn broken() {
+    let x = 1;
+
+fn recovered() {
+    let y = 2;
+}
+
+// Missing semicolons
+fn missing_semi() {
+    let a = 1
+    let b = 2;
+}
+
+// Unexpected token in item position
+@@@ fn after_garbage() {}
+
+// Missing closing paren
+fn unclosed_paren(a: Int {
+}
+
+// pub on invalid item
+pub import foo;
+
+// Extra commas
+fn extra_comma(a: Int,, b: Int) {}

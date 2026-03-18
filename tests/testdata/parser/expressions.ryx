@@ -1,0 +1,99 @@
+// Expressions — all literal and operator forms
+
+fn main() {
+    // Integer literals
+    let a = 42;
+    let b = 0xFF;
+    let c = 0b1010;
+    let d = 0o77;
+    let e = 1_000_000;
+
+    // Float literals
+    let f = 3.14;
+    let g = 1e10;
+    let h = 2.5e-3;
+
+    // String and char literals
+    let s = "hello world";
+    let ch = 'a';
+    let bl = true;
+
+    // Unary expressions
+    let neg = -x;
+    let notflag = !flag;
+    let dneg = --x;
+
+    // Binary arithmetic
+    let sum = a + b;
+    let diff = a - b;
+    let prod = a * b;
+    let quot = a / b;
+    let rem = a % b;
+
+    // Comparison
+    let lt = a < b;
+    let gt = a > b;
+    let le = a <= b;
+    let ge = a >= b;
+    let eq = a == b;
+    let ne = a != b;
+
+    // Logical
+    let land = a && b;
+    let lor = a || b;
+
+    // Concat and range
+    let cat = s ++ " world";
+    let rng = 1..10;
+    let rng_inc = 1..=10;
+
+    // Pipe
+    let piped = x |> foo;
+
+    // Assignment
+    x = 42;
+
+    // As expression
+    let cast = x as Float;
+
+    // Precedence: a + b * c
+    let prec1 = a + b * c;
+    // a * b + c
+    let prec2 = a * b + c;
+    // a == b && c
+    let prec3 = a == b && c;
+    // a && b || c
+    let prec4 = a && b || c;
+
+    // Call, field, index
+    let called = foo(1, 2, 3);
+    let field = obj.name;
+    let indexed = arr[0];
+    let chained = a.b.c();
+    let multi_idx = matrix[i][j];
+
+    // Group, tuple, array
+    let grouped = (a + b);
+    let tup = (1, 2, 3);
+    let empty_tup = ();
+    let arr2 = [1, 2, 3];
+    let empty_arr = [];
+
+    // Struct literal
+    let p = Point { x: 1, y: 2 };
+    let empty_s = Empty { };
+
+    // Block expression
+    let block_val = {
+        let x = 1;
+        x + 1
+    };
+
+    // Path expression
+    let path = std::io::println;
+
+    // Trailing commas
+    let tc_call = foo(1, 2, 3,);
+    let tc_arr = [1, 2, 3,];
+    let tc_tup = (1, 2,);
+}

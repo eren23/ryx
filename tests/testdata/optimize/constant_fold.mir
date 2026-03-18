@@ -1,0 +1,27 @@
+// Test: constant folding pass
+// Input MIR for a function that computes (3 + 4) * 2
+// Expected: all constant expressions are folded at compile time.
+
+fn constant_fold() -> Int {
+  // locals:
+  //   %0: Int  (binop)
+  //   %1: Int  (binop)
+
+  bb0 (entry):
+    %0 = 3 + 4
+    %1 = %0 * 2
+    return %1
+}
+
+// After constant_fold pass:
+// %0 = 7
+// %1 = 14
+// return %1
+
+--- EXPECTED ---
+fn constant_fold() -> Int {
+  bb0 (entry):
+    %0 = 7
+    %1 = 14
+    return %1
+}

@@ -1,0 +1,34 @@
+// Complex generics with parameterized ADTs and higher-order functions
+
+type Pair<A, B> {
+    MkPair(A, B),
+}
+
+fn first<A, B>(p: Pair<A, B>) -> A {
+    match p {
+        MkPair(a, _) => a,
+    }
+}
+
+fn second<A, B>(p: Pair<A, B>) -> B {
+    match p {
+        MkPair(_, b) => b,
+    }
+}
+
+fn map_first<A, B, C>(p: Pair<A, B>, f: (A) -> C) -> Pair<C, B> {
+    match p {
+        MkPair(a, b) => MkPair(f(a), b),
+    }
+}
+
+fn main() {
+    let p = MkPair(10, 20);
+    println(first(p));
+    println(second(p));
+
+    let p2 = MkPair(3, 7);
+    let p3 = map_first(p2, |x: Int| -> Int { x * 10 });
+    println(first(p3));
+    println(second(p3))
+}

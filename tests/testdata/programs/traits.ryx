@@ -1,0 +1,35 @@
+trait Describable {
+    fn describe(self) -> Int;
+}
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+struct Circle {
+    radius: Int,
+}
+
+impl Describable for Point {
+    fn describe(self) -> Int {
+        self.x + self.y
+    }
+}
+
+impl Describable for Circle {
+    fn describe(self) -> Int {
+        self.radius
+    }
+}
+
+fn print_description(d: Describable) -> Int {
+    d.describe()
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 };
+    let c = Circle { radius: 10 };
+    println(p.describe());
+    println(c.describe())
+}

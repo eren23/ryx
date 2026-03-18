@@ -1,0 +1,101 @@
+{
+  "task_id": "task-7",
+  "title": "MIR construction in SSA form with CFG and optimization passes",
+  "description": "Implement pkg/mir/mir.go: MIR types (MIRFunction, BasicBlock, BlockID, MIRStmt interface variants for Assign/Call/BinaryOp/UnaryOp/FieldAccess/IndexAccess/ArrayAlloc/StructAlloc/EnumAlloc/ClosureAlloc/ChannelCreate/ChannelSend/Spawn, Terminator interface variants for Goto/Branch/Switch/Return/Unreachable, MIRLocal/MIRConst/MIRGlobal values). Implement pkg/mir/builder.go: HIR-to-MIR SSA construction with phi node placement at join points. Implement pkg/mir/printer.go: MIR pretty-printer. Write mir_test.go for SSA correctness, CFG structure, phi node placement. Then implement all 11 optimization passes in pkg/optimize/: pipeline.go (pass runner), constant_fold.go, dead_code.go, copy_prop.go, cse.go, inline.go (\u22648 stmts, not recursive), const_prop.go, licm.go, tco.go (self-tail-recursion to loop), escape.go (stack vs heap decision), block_merge.go. Write optimize_test.go verifying each pass individually and the combined pipeline preserves semantics. Create golden test data in tests/testdata/optimize/.",
+  "status": "done",
+  "task_kind": "implement",
+  "role_hint": "compiler-backend",
+  "deps": [
+    "task-6"
+  ],
+  "target_files": [
+    "pkg/mir/mir.go",
+    "pkg/mir/builder.go",
+    "pkg/mir/printer.go",
+    "pkg/mir/mir_test.go",
+    "pkg/optimize/pipeline.go",
+    "pkg/optimize/constant_fold.go",
+    "pkg/optimize/dead_code.go",
+    "pkg/optimize/copy_prop.go",
+    "pkg/optimize/cse.go",
+    "pkg/optimize/inline.go",
+    "pkg/optimize/const_prop.go",
+    "pkg/optimize/licm.go",
+    "pkg/optimize/tco.go",
+    "pkg/optimize/escape.go",
+    "pkg/optimize/block_merge.go",
+    "pkg/optimize/optimize_test.go",
+    "tests/testdata/optimize/constant_fold.mir",
+    "tests/testdata/optimize/dead_code.mir",
+    "tests/testdata/optimize/inline.mir",
+    "tests/testdata/optimize/tco.mir",
+    "tests/testdata/optimize/escape.mir",
+    "tests/integration/optimize_golden_test.go"
+  ],
+  "read_files": [],
+  "files_modified": [],
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"5e692dab-e862-45b8-8207-901bfcefa3b2\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"fc344c10-c31a-4f85-a057-9dec4132055c\",\"session_id\":\"a97a6b23-39e6-4321-928b-e350c39358e7\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"5e692dab-e862-45b8-8207-901bfcefa3b2\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "symbol_scope": [],
+  "tokens_used": 5507,
+  "cost_usd": 0.0,
+  "attempt_count": 7,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T20:44:03.419947+00:00",
+      "duration_s": 600.0106208324432,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 2,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T20:54:03.456462+00:00",
+      "duration_s": 600.0145461559296,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 3,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:54:49.211597+00:00",
+      "duration_s": 45.72980570793152,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 4,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:55:26.194635+00:00",
+      "duration_s": 36.962141275405884,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 5,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T21:01:33.997878+00:00",
+      "duration_s": 367.7801949977875,
+      "tokens_used": 298,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 6,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T21:11:34.032811+00:00",
+      "duration_s": 600.0145699977875,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 7,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T21:15:41.695451+00:00",
+      "duration_s": 247.64041113853455,
+      "tokens_used": 2725,
+      "failure_cause": "agent_error"
+    }
+  ],
+  "has_diff": false
+}

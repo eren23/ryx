@@ -1,0 +1,63 @@
+{
+  "task_id": "task-3",
+  "title": "AST node types and recursive descent parser with Pratt expressions",
+  "description": "Implement pkg/parser/ast.go with 40+ AST node types (Program, FnDef, TypeDef, StructDef, TraitDef, ImplBlock, Block, LetStmt, ExprStmt, ReturnStmt, IfExpr, MatchExpr, ForExpr, WhileExpr, LoopExpr, BinaryExpr, UnaryExpr, CallExpr, FieldExpr, IndexExpr, LambdaExpr, SpawnExpr, ChannelExpr, all literals, all pattern variants, all type expression variants). Implement pkg/parser/precedence.go with 14-level Pratt precedence table. Implement pkg/parser/error.go with parse error types and recovery (synchronize on {, }, ;, fn, type, struct, trait, impl; collect up to 20 errors; missing semicolon auto-insert; unclosed delimiter reporting). Implement pkg/parser/parser.go: recursive descent for items/statements, Pratt parsing for expressions, full grammar coverage including generics, traits, impl blocks, pattern matching with guards, closures, concurrency syntax, trailing commas. Write parser_test.go covering all precedence levels, every expression/statement/item form, error recovery, AST span preservation. Create golden test data in tests/testdata/parser/.",
+  "status": "done",
+  "task_kind": "implement",
+  "role_hint": "compiler-frontend",
+  "deps": [
+    "task-2"
+  ],
+  "target_files": [
+    "pkg/parser/ast.go",
+    "pkg/parser/precedence.go",
+    "pkg/parser/error.go",
+    "pkg/parser/parser.go",
+    "pkg/parser/parser_test.go",
+    "tests/testdata/parser/expressions.vex",
+    "tests/testdata/parser/statements.vex",
+    "tests/testdata/parser/functions.vex",
+    "tests/testdata/parser/types.vex",
+    "tests/testdata/parser/patterns.vex",
+    "tests/testdata/parser/generics.vex",
+    "tests/testdata/parser/traits.vex",
+    "tests/testdata/parser/closures.vex",
+    "tests/testdata/parser/concurrency.vex",
+    "tests/testdata/parser/error_recovery.vex",
+    "tests/integration/parser_golden_test.go"
+  ],
+  "read_files": [],
+  "files_modified": [],
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"b3079495-7bf2-4947-8935-a551c1d135b4\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"490ad287-caa7-404c-bb3f-7799b032b463\",\"session_id\":\"6d32a587-626b-40d8-b9a2-eaa2968f9855\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"b3079495-7bf2-4947-8935-a551c1d135b4\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "symbol_scope": [],
+  "tokens_used": 30694,
+  "cost_usd": 0.0,
+  "attempt_count": 3,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T18:27:45.882521+00:00",
+      "duration_s": 600.0078780651093,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 2,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T18:37:45.921544+00:00",
+      "duration_s": 600.015643119812,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 3,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T18:47:45.939229+00:00",
+      "duration_s": 600.0055470466614,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
+  "has_diff": false
+}

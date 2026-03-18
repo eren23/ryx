@@ -1,0 +1,93 @@
+// Basic type inference tests
+
+// Integer literal inference
+fn test_int() -> Int {
+    let x = 42;
+    x
+}
+
+// Float literal inference
+fn test_float() -> Float {
+    let x = 3.14;
+    x
+}
+
+// Bool literal inference
+fn test_bool() -> Bool {
+    let x = true;
+    x
+}
+
+// String literal inference
+fn test_string() -> String {
+    let x = "hello";
+    x
+}
+
+// Char literal inference
+fn test_char() -> Char {
+    let x = 'a';
+    x
+}
+
+// Annotated let binding
+fn test_annotated() -> Int {
+    let x: Int = 42;
+    x
+}
+
+// Arithmetic inference
+fn test_arithmetic() -> Int {
+    let a = 1 + 2;
+    let b = a * 3;
+    let c = b - 1;
+    let d = c / 2;
+    let e = d % 3;
+    e
+}
+
+// Comparison inference produces Bool
+fn test_comparison() -> Bool {
+    let a = 1 < 2;
+    let b = 3 >= 2;
+    let c = a && b;
+    c
+}
+
+// String concatenation
+fn test_concat() -> String {
+    "hello" ++ " " ++ "world"
+}
+
+// Block expressions
+fn test_block() -> Int {
+    let x = {
+        let a = 10;
+        let b = 20;
+        a + b
+    };
+    x
+}
+
+// Nested function calls
+fn double(x: Int) -> Int { x * 2 }
+fn add_one(x: Int) -> Int { x + 1 }
+
+fn test_nested_calls() -> Int {
+    add_one(double(21))
+}
+
+// Pipe operator
+fn test_pipe() -> Int {
+    5 |> double |> add_one
+}
+
+// Unit return
+fn test_unit() {
+    let x = 42;
+}
+
+// Return statement
+fn test_return() -> Int {
+    return 42;
+}

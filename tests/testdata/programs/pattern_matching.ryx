@@ -1,0 +1,38 @@
+type Shape {
+    Circle(Float),
+    Rectangle(Float, Float),
+    Triangle(Float, Float, Float),
+}
+
+type Option {
+    Some(Int),
+    None,
+}
+
+fn describe_shape(s: Shape) -> Int {
+    match s {
+        Circle(_) => 1,
+        Rectangle(_, _) => 2,
+        Triangle(_, _, _) => 3,
+    }
+}
+
+fn unwrap_or(opt: Option, default: Int) -> Int {
+    match opt {
+        Some(v) => v,
+        None => default,
+    }
+}
+
+fn main() {
+    println(describe_shape(Circle(5.0)));
+    println(describe_shape(Rectangle(3.0, 4.0)));
+    println(describe_shape(Triangle(3.0, 4.0, 5.0)));
+
+    println(unwrap_or(Some(42), 0));
+    println(unwrap_or(None, 99));
+
+    let x = 15;
+    let result = if x > 10 { "big" } else { "small" };
+    println(result)
+}

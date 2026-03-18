@@ -1,0 +1,17 @@
+// Line comment
+x // inline comment
+y
+
+/* Block comment */
+a /* inline block */ b
+
+/* Nested /* block */ comment */
+c
+
+/* Multi-line
+   block
+   comment */
+d
+
+/* Deep /* nesting /* level */ three */ two */
+e

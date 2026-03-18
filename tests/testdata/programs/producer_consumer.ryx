@@ -1,0 +1,26 @@
+// Producer-consumer pattern with sentinel value
+
+fn main() {
+    let ch = channel<Int>(10);
+
+    spawn {
+        let mut i = 0;
+        while i < 10 {
+            ch.send(i);
+            i = i + 1;
+        };
+        ch.send(-1);
+    };
+
+    let mut sum = 0;
+    let mut done = false;
+    while !done {
+        let val = ch.recv();
+        if val == -1 {
+            done = true;
+        } else {
+            sum = sum + val;
+        };
+    };
+    println(sum)
+}

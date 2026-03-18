@@ -1,0 +1,5 @@
+items: 1
+errors: 0
+
+--- items ---
+[0] fn test_patterns(0 params) { 19 stmts } [46..2075)

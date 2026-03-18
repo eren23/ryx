@@ -1,0 +1,28 @@
+items: 2
+errors: 20
+
+--- errors ---
+  [131..132) expected identifier, found `(`
+  [227..229) unexpected keyword `fn`
+  [242..243) expected `;`, found `{`
+  [284..286) expected `;`, found keyword `fn`
+  [284..286) unexpected keyword `fn`
+  [302..303) expected `;`, found `{`
+  [322..325) expected `;`, found keyword `let`
+  [377..379) expected `;`, found keyword `fn`
+  [377..379) unexpected keyword `fn`
+  [396..397) expected `;`, found `{`
+  [425..427) expected `;`, found keyword `fn`
+  [425..427) unexpected keyword `fn`
+  [444..445) expected `)`, found `:`
+  [444..445) expected `;`, found `:`
+  [444..445) unexpected `:`
+  [478..481) expected `;`, found keyword `pub`
+  [478..481) unexpected keyword `pub`
+  [482..488) unexpected keyword `import`
+  [511..513) unexpected keyword `fn`
+  [527..528) expected `)`, found `:`
+
+--- items ---
+[0] fn ((0 params) { 0 stmts } [128..136)
+[1] fn broken(0 params) { 12 stmts } [197..545)

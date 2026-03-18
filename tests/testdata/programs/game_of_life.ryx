@@ -1,0 +1,95 @@
+// Simplified Game of Life on a 5x5 grid (flat array)
+// Blinker pattern oscillates between horizontal and vertical
+
+fn count_neighbors(grid: [Int], row: Int, col: Int, rows: Int, cols: Int) -> Int {
+    let mut count = 0;
+    let mut dr = -1;
+    while dr <= 1 {
+        let mut dc = -1;
+        while dc <= 1 {
+            if dr != 0 || dc != 0 {
+                let nr = row + dr;
+                let nc = col + dc;
+                if nr >= 0 && nr < rows && nc >= 0 && nc < cols {
+                    count = count + grid[nr * cols + nc];
+                };
+            };
+            dc = dc + 1;
+        };
+        dr = dr + 1;
+    };
+    count
+}
+
+fn next_generation(current: [Int], next: [Int], rows: Int, cols: Int) {
+    let mut r = 0;
+    while r < rows {
+        let mut c = 0;
+        while c < cols {
+            let idx = r * cols + c;
+            let n = count_neighbors(current, r, c, rows, cols);
+            if current[idx] == 1 {
+                // Live cell: survives with 2 or 3 neighbors
+                if n == 2 || n == 3 {
+                    next[idx] = 1;
+                } else {
+                    next[idx] = 0;
+                };
+            } else {
+                // Dead cell: born with exactly 3 neighbors
+                if n == 3 {
+                    next[idx] = 1;
+                } else {
+                    next[idx] = 0;
+                };
+            };
+            c = c + 1;
+        };
+        r = r + 1;
+    }
+}
+
+fn copy_grid(src: [Int], dst: [Int], size: Int) {
+    let mut i = 0;
+    while i < size {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+}
+
+fn count_live(grid: [Int], size: Int) -> Int {
+    let mut count = 0;
+    let mut i = 0;
+    while i < size {
+        count = count + grid[i];
+        i = i + 1;
+    };
+    count
+}
+
+fn main() {
+    let rows = 5;
+    let cols = 5;
+    let size = 25;
+
+    // Initial blinker (horizontal) at row 2: positions (2,1), (2,2), (2,3)
+    let mut grid = [0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 1, 1, 1, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0];
+    let mut temp = [0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0];
+
+    // Run 3 generations
+    let mut gen = 0;
+    while gen < 3 {
+        next_generation(grid, temp, rows, cols);
+        copy_grid(temp, grid, size);
+        println(count_live(grid, size));
+        gen = gen + 1;
+    }
+}

@@ -1,0 +1,14 @@
+items: 10
+errors: 0
+
+--- items ---
+[0] fn simple(0 params) { 0 stmts } [39..53)
+[1] fn with_params(2 params) { 0 stmts } [55..88)
+[2] fn with_return(0 params) -> <type> { 0 stmts + trailing } [90..120)
+[3] fn full(2 params) -> <type> { 0 stmts + trailing } [122..162)
+[4] pub fn public_fn(0 params) { 0 stmts } [164..185)
+[5] fn trailing_comma(2 params) -> <type> { 0 stmts + trailing } [187..238)
+[6] fn no_body_signature(1 params) -> <type> ; [240..276)
+[7] fn multi_line(3 params) -> <type> { 0 stmts + trailing } [278..355)
+[8] fn nested_calls(0 params) { 2 stmts } [357..425)
+[9] fn complex_body(0 params) -> <type> { 2 stmts + trailing } [427..541)

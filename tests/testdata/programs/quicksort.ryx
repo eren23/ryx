@@ -1,0 +1,38 @@
+fn swap(arr: [Int], i: Int, j: Int) {
+    let tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+}
+
+fn partition(arr: [Int], low: Int, high: Int) -> Int {
+    let pivot = arr[high];
+    let mut i = low;
+    let mut j = low;
+    while j < high {
+        if arr[j] <= pivot {
+            swap(arr, i, j);
+            i = i + 1;
+        };
+        j = j + 1;
+    };
+    swap(arr, i, high);
+    i
+}
+
+fn quicksort(arr: [Int], low: Int, high: Int) {
+    if low < high {
+        let p = partition(arr, low, high);
+        quicksort(arr, low, p - 1);
+        quicksort(arr, p + 1, high);
+    }
+}
+
+fn main() {
+    let arr = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0];
+    quicksort(arr, 0, 9);
+    let mut i = 0;
+    while i < 10 {
+        println(arr[i]);
+        i = i + 1;
+    }
+}

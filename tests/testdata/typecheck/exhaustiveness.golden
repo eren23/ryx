@@ -1,0 +1,8 @@
+parse_errors: 0
+resolver_errors: 0
+resolver_warnings: 6
+type_errors: 0
+type_warnings: 0
+
+node_types: 64
+symbol_types: 13

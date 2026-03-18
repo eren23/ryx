@@ -1,0 +1,17 @@
+fn main() {
+    let ch = channel<Int>(5);
+
+    ch.send(10);
+    ch.send(20);
+    ch.send(30);
+
+    println(ch.recv());
+    println(ch.recv());
+    println(ch.recv());
+
+    let ch2 = channel<Int>(1);
+    spawn {
+        ch2.send(42);
+    };
+    println(ch2.recv())
+}

@@ -1,0 +1,33 @@
+// Integer literals
+0
+42
+1_000_000
+999_999_999
+
+// Hex literals
+0xFF
+0xff
+0xFF_FF
+0x0
+
+// Binary literals
+0b1010
+0b1111_0000
+0b0
+
+// Octal literals
+0o77
+0o77_77
+0o0
+
+// Float literals
+3.14
+0.5
+1e10
+2.5e-3
+1E+5
+1_000.5
+
+// Bool literals
+true
+false

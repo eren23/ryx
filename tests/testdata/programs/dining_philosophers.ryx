@@ -1,0 +1,46 @@
+// Simplified dining philosophers using channels as mutexes
+
+fn philosopher(id: Int, left_fork: channel<Int>, right_fork: channel<Int>, done: channel<Int>) {
+    // Pick up forks (receive token = acquire lock)
+    let l = left_fork.recv();
+    let r = right_fork.recv();
+
+    // Eat (nothing to do, just signal completion)
+
+    // Put down forks (send token back = release lock)
+    left_fork.send(l);
+    right_fork.send(r);
+
+    // Signal done
+    done.send(1);
+}
+
+fn main() {
+    // Create fork channels (each holds one token = mutex)
+    let fork0 = channel<Int>(1);
+    let fork1 = channel<Int>(1);
+    let fork2 = channel<Int>(1);
+
+    // Initialize forks with tokens
+    fork0.send(1);
+    fork1.send(1);
+    fork2.send(1);
+
+    let done = channel<Int>(3);
+
+    // Philosopher 0 picks up fork0 then fork1
+    spawn { philosopher(0, fork0, fork1, done) };
+    // Philosopher 1 picks up fork1 then fork2
+    spawn { philosopher(1, fork1, fork2, done) };
+    // Philosopher 2 picks up fork0 then fork2 (reversed to avoid deadlock)
+    spawn { philosopher(2, fork0, fork2, done) };
+
+    // Wait for all philosophers to finish
+    let mut total = 0;
+    let mut i = 0;
+    while i < 3 {
+        total = total + done.recv();
+        i = i + 1;
+    };
+    println(total)
+}

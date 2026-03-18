@@ -1,0 +1,86 @@
+// Type error tests — each function should produce a type error
+
+// Type annotation mismatch
+fn error_annotation_mismatch() {
+    let x: Int = "hello";
+}
+
+// Arithmetic with wrong types
+fn error_arithmetic() {
+    let x = 1 + "two";
+}
+
+// Logical operator with non-bool
+fn error_logical() {
+    let x = 42 && true;
+}
+
+// String concat with non-string
+fn error_concat() {
+    let x = 42 ++ "hello";
+}
+
+// Function return type mismatch
+fn error_return() -> Int {
+    "not an int"
+}
+
+// If condition not bool
+fn error_if_cond() {
+    if 42 { }
+}
+
+// If/else branch type mismatch
+fn error_if_branches() {
+    let x = if true { 1 } else { "two" };
+}
+
+// Match arm type mismatch
+fn error_match_arms() {
+    let x = match 42 {
+        1 => "one",
+        _ => 42,
+    };
+}
+
+// Array with heterogeneous elements
+fn error_array() {
+    let xs = [1, "two", 3];
+}
+
+// Array index not int
+fn error_index() {
+    let xs = [1, 2, 3];
+    let x = xs["bad"];
+}
+
+// Struct field type mismatch
+struct Point { x: Int, y: Int }
+
+fn error_struct_field() {
+    let p = Point { x: 1, y: "bad" };
+}
+
+// Missing struct field
+fn error_struct_missing() {
+    let p = Point { x: 1 };
+}
+
+// Unknown struct field
+fn error_struct_unknown() {
+    let p = Point { x: 1, y: 2, z: 3 };
+}
+
+// Wrong number of function arguments
+fn add(a: Int, b: Int) -> Int { a + b }
+
+fn error_arity() {
+    let x = add(1);
+}
+
+// While condition not bool
+fn error_while() {
+    while 42 { }
+}
+
+fn main() { }

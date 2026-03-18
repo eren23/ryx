@@ -1,0 +1,121 @@
+// Pattern matching — all pattern variants
+
+fn test_patterns() {
+    // Wildcard pattern
+    match x {
+        _ => 0,
+    };
+
+    // Binding pattern
+    match x {
+        n => n,
+    };
+
+    // Integer literal pattern
+    match x {
+        42 => true,
+        _ => false,
+    };
+
+    // Negative literal pattern
+    match x {
+        -1 => true,
+        _ => false,
+    };
+
+    // Float literal pattern
+    match x {
+        3.14 => true,
+        _ => false,
+    };
+
+    // String literal pattern
+    match s {
+        "hello" => 1,
+        "world" => 2,
+        _ => 0,
+    };
+
+    // Char literal pattern
+    match c {
+        'a' => 1,
+        _ => 0,
+    };
+
+    // Bool literal pattern
+    match b {
+        true => 1,
+        false => 0,
+    };
+
+    // Variant pattern
+    match opt {
+        Some(val) => val,
+        None => 0,
+    };
+
+    // Nested variant pattern
+    match result {
+        Ok(Some(val)) => val,
+        Ok(None) => 0,
+        Err(msg) => -1,
+    };
+
+    // Tuple pattern
+    match pair {
+        (a, b) => a + b,
+    };
+
+    // Struct pattern
+    match point {
+        Point { x: px, y: py } => px + py,
+    };
+
+    // Struct pattern with shorthand
+    match point {
+        Point { x, y } => x + y,
+    };
+
+    // Range pattern
+    match n {
+        1..10 => "single digit",
+        10..100 => "double digit",
+        _ => "other",
+    };
+
+    // Inclusive range pattern
+    match ch {
+        'a'..='z' => "lowercase",
+        'A'..='Z' => "uppercase",
+        _ => "other",
+    };
+
+    // Or-pattern
+    match color {
+        Red | Green | Blue => "primary",
+        _ => "other",
+    };
+
+    // Match with guard
+    match n {
+        x if x > 0 => "positive",
+        x if x < 0 => "negative",
+        _ => "zero",
+    };
+
+    // Match with block body
+    match tree {
+        Leaf(val) => val,
+        Node(left, val, right) => {
+            let l = sum(left);
+            let r = sum(right);
+            l + val + r
+        },
+    };
+
+    // Or-pattern with guard
+    match n {
+        1 | 2 if n > 0 => true,
+        _ => false,
+    };
+}

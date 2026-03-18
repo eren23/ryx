@@ -1,0 +1,15 @@
+// Arithmetic operators
++ - * / %
+
+// Comparison operators
+== != < > <= >=
+
+// Logical operators
+&& || !
+
+// Special operators
+| |> ++ .. ..= = ->
+
+// Delimiters
+( ) { } [ ]
+, : ; . :: =>

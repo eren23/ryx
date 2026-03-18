@@ -1,0 +1,48 @@
+// Concurrent Primes - demonstrates spawn and channels
+
+fn is_prime(n: Int) -> Bool {
+    if n < 2 { return false };
+    if n < 4 { return true };
+    if n % 2 == 0 { return false };
+    let mut i = 3;
+    while i * i <= n {
+        if n % i == 0 { return false };
+        i = i + 2;
+    };
+    true
+}
+
+fn check_range(start: Int, end: Int, results: channel<Int>) {
+    let mut n = start;
+    while n < end {
+        if is_prime(n) {
+            results.send(n);
+        };
+        n = n + 1;
+    };
+    results.send(-1);
+}
+
+fn main() {
+    let results = channel<Int>(100);
+    let num_workers = 4;
+    let range_size = 25;
+
+    // Spawn 4 workers checking ranges [2,27), [27,52), [52,77), [77,102)
+    spawn { check_range(2, 27, results) };
+    spawn { check_range(27, 52, results) };
+    spawn { check_range(52, 77, results) };
+    spawn { check_range(77, 102, results) };
+
+    let mut count = 0;
+    let mut done_workers = 0;
+    while done_workers < num_workers {
+        let val = results.recv();
+        if val == -1 {
+            done_workers = done_workers + 1;
+        } else {
+            count = count + 1;
+        };
+    };
+    println(count)
+}

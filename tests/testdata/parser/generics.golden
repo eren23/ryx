@@ -1,0 +1,24 @@
+items: 12
+errors: 0
+
+--- items ---
+[0] fn id<1 params>(1 params) -> <type> { 0 stmts + trailing } [84..109)
+[1] fn pair<2 params>(2 params) -> <type> { 0 stmts + trailing } [142..188)
+[2] fn show<1 params>(1 params) -> <type> { 0 stmts + trailing } [219..272)
+[3] fn print_and_compare<1 params>(2 params) { 0 stmts } [306..359)
+[4] struct Pair<2 params> { 2 fields } [379..429)
+  field first
+  field second
+[5] type Tree<1 params> { 2 variants } [446..506)
+  variant Leaf(1 fields)
+  variant Node(3 fields)
+[6] trait Container<1 params> { 2 methods } [525..604)
+  fn get(1 params) -> <type> ; [550..568)
+  fn set(2 params) -> <type> ; [573..602)
+[7] impl<1 params> Container for <type> { 2 methods } [622..736)
+  fn get(1 params) -> <type> { 0 stmts + trailing } [660..692)
+  fn set(2 params) -> <type> { 0 stmts + trailing } [697..734)
+[8] fn nested<1 params>(1 params) -> <type> { 0 stmts + trailing } [757..819)
+[9] fn complex<2 params>(2 params) { 0 stmts } [859..915)
+[10] fn apply<2 params>(2 params) -> <type> { 0 stmts + trailing } [952..999)
+[11] fn higher<1 params>(2 params) -> <type> { 0 stmts + trailing } [1033..1086)

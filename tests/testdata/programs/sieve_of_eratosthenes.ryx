@@ -1,0 +1,35 @@
+// Sieve of Eratosthenes: count primes below 50
+
+fn main() {
+    let limit = 50;
+    // 0 = prime candidate, 1 = not prime
+    // 0 and 1 are marked as not prime
+    let mut sieve = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let mut i = 2;
+    while i * i < limit {
+        if sieve[i] == 0 {
+            let mut j = i * i;
+            while j < limit {
+                sieve[j] = 1;
+                j = j + i;
+            };
+        };
+        i = i + 1;
+    };
+
+    // Count primes
+    let mut count = 0;
+    let mut k = 2;
+    while k < limit {
+        if sieve[k] == 0 {
+            count = count + 1;
+        };
+        k = k + 1;
+    };
+    println(count)
+}

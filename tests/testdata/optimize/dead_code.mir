@@ -1,0 +1,25 @@
+// Test: dead code elimination pass
+// Function with unused computations that should be removed.
+
+fn dead_code(x: Int) -> Int {
+  // locals:
+  //   %0: Int  (x)
+  //   %1: Int  (unused)
+  //   %2: Int  (used)
+
+  bb0 (entry):
+    %1 = %0 + 100
+    %2 = %0 * 2
+    return %2
+}
+
+// After dead_code pass:
+// %1 = %0 + 100 is removed (result never used)
+// %2 = %0 * 2 is preserved (returned)
+
+--- EXPECTED ---
+fn dead_code(x: Int) -> Int {
+  bb0 (entry):
+    %2 = %0 * 2
+    return %2
+}

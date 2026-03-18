@@ -1,0 +1,5 @@
+# Task: Project scaffolding, diagnostics, and token definitions
+
+Initialize Go module (go.mod), vex_config.toml with all documented defaults, and foundational packages. Implement pkg/diagnostic/ (source file registry, Span type, line/col mapping, error/warning formatting with source underlining and 'did you mean?' suggestions). Implement pkg/lexer/token.go with all 52 token types as an enum, Token struct with span/line/col/value, and keyword lookup table. Write diagnostic_test.go verifying formatting, span-to-line/col conversion, and multi-error accumulation.
+
+Target files: go.mod, go.sum, vex_config.toml, pkg/diagnostic/diagnostic.go, pkg/diagnostic/source.go, pkg/diagnostic/diagnostic_test.go, pkg/lexer/token.go

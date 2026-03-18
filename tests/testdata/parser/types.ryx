@@ -1,0 +1,55 @@
+// Type definitions — ADTs, structs, type expressions
+
+// Simple ADT
+type Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// ADT with data
+type Option<T> {
+    Some(T),
+    None,
+}
+
+// ADT with multiple data fields
+type Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+// Struct definitions
+struct Point {
+    x: Float,
+    y: Float,
+}
+
+struct Person {
+    pub name: String,
+    pub age: Int,
+    email: String,
+}
+
+pub struct PubStruct {
+    value: Int,
+}
+
+// Type expressions in function signatures
+fn type_exprs(
+    a: Int,
+    b: [Int],
+    c: (Int, String),
+    d: (Int, Int) -> Bool,
+    e: fn(Int) -> Bool,
+    f: Vec<Int>,
+    g: Map<String, Vec<Int>>,
+) {}
+
+// Self type
+trait Factory {
+    fn create() -> Self;
+}
+
+// Empty tuple type
+fn unit() -> () {}

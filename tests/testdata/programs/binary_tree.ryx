@@ -1,0 +1,32 @@
+type Tree {
+    Leaf(Int),
+    Node(Tree, Int, Tree),
+}
+
+fn sum_tree(t: Tree) -> Int {
+    match t {
+        Leaf(v) => v,
+        Node(left, v, right) => sum_tree(left) + v + sum_tree(right),
+    }
+}
+
+fn depth(t: Tree) -> Int {
+    match t {
+        Leaf(_) => 1,
+        Node(left, _, right) => {
+            let ld = depth(left);
+            let rd = depth(right);
+            if ld > rd { ld + 1 } else { rd + 1 }
+        },
+    }
+}
+
+fn main() {
+    let tree = Node(
+        Node(Leaf(1), 2, Leaf(3)),
+        4,
+        Node(Leaf(5), 6, Leaf(7))
+    );
+    println(sum_tree(tree));
+    println(depth(tree))
+}

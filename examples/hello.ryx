@@ -1,0 +1,15 @@
+// Hello World - demonstrates basic Ryx features
+fn greet(name: String) -> String {
+    "Hello, " ++ name ++ "!"
+}
+
+fn main() {
+    println(greet("World"));
+    println(greet("Ryx"));
+
+    let x = 42;
+    println(x);
+
+    let is_even = x % 2 == 0;
+    println(is_even)
+}

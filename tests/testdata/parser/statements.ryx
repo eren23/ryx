@@ -1,0 +1,38 @@
+// Statements — let, return, expression statements
+
+fn main() {
+    // Let statements
+    let x = 42;
+    let mut y = 0;
+    let z: Int = 100;
+    let mut w: Float = 3.14;
+    let uninitialized: Int;
+
+    // Expression statements
+    foo();
+    bar(1, 2);
+    x + y;
+
+    // Return statements
+    return 42;
+}
+
+fn bare_return() {
+    return;
+}
+
+fn trailing_expr() -> Int {
+    let x = 10;
+    x + 1
+}
+
+fn multiple_stmts() {
+    let a = 1;
+    let b = 2;
+    let c = a + b;
+    println(c);
+}
+
+fn semicolon_auto_insert() {
+    let x = 1
+}

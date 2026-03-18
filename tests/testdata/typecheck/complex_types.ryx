@@ -1,0 +1,140 @@
+// Complex type checking scenarios
+
+// Recursive function
+fn factorial(n: Int) -> Int {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+
+// Mutual recursion
+fn is_even(n: Int) -> Bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+fn is_odd(n: Int) -> Bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
+
+// Higher-order functions
+fn apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+fn compose(f: (Int) -> Int, g: (Int) -> Int, x: Int) -> Int { f(g(x)) }
+
+fn double(x: Int) -> Int { x * 2 }
+fn inc(x: Int) -> Int { x + 1 }
+
+// Struct with methods
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { value: 0 }
+    }
+
+    fn get(self) -> Int {
+        self.value
+    }
+}
+
+// Enum with complex variants
+type CalcExpr {
+    Lit(Int),
+    Sum(Int, Int),
+    Mul(Int, Int),
+    Neg(Int),
+}
+
+fn compute(e: CalcExpr) -> Int {
+    match e {
+        Lit(n) => n,
+        Sum(a, b) => a + b,
+        Mul(a, b) => a * b,
+        Neg(n) => 0 - n,
+    }
+}
+
+// Nested structs
+struct Point { x: Int, y: Int }
+struct Rect { origin: Point, size: Point }
+
+fn rect_area(r: Rect) -> Int {
+    r.size.x * r.size.y
+}
+
+// Lambda usage
+fn test_lambda() -> Int {
+    let f = |x: Int| x * 2;
+    let g = |x: Int| x + 1;
+    let result = f(21);
+    g(result)
+}
+
+// Array operations
+fn sum(xs: [Int]) -> Int {
+    let total = 0;
+    total
+}
+
+// Spawn and channels
+fn test_spawn() {
+    let ch = channel<Int>;
+    spawn {
+        let x = 42;
+    };
+}
+
+// Complex match with multiple patterns
+type Token {
+    Number(Int),
+    Plus,
+    Minus,
+    Star,
+}
+
+fn token_name(t: Token) -> String {
+    match t {
+        Number(n) => "number",
+        Plus => "plus",
+        Minus => "minus",
+        Star => "star",
+    }
+}
+
+// For loop with range
+fn test_for() {
+    let xs = [1, 2, 3, 4, 5];
+    for x in xs {
+        let y = x + 1;
+    }
+}
+
+// Main function using everything
+fn main() {
+    let f = factorial(5);
+    let e = is_even(4);
+    let o = is_odd(3);
+
+    let result = apply(double, 21);
+    let composed = compose(double, inc, 20);
+
+    let c = Counter { value: 0 };
+
+    let expr = Lit(42);
+    let val = compute(expr);
+
+    let p = Point { x: 1, y: 2 };
+    let r = Rect { origin: Point { x: 0, y: 0 }, size: Point { x: 10, y: 20 } };
+    let area = rect_area(r);
+
+    let lam = test_lambda();
+
+    test_spawn();
+
+    let tok = token_name(Plus);
+
+    test_for();
+}

@@ -1,0 +1,38 @@
+# Agent / swarm – keep locally, don't commit
+# .agent/
+
+# Attocode
+.attocode/vectors
+.attocode/cache
+
+# Go
+vendor/
+ryx
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+
+# Docs (mdBook build output)
+docs/book/
+
+# IDE / editor
+.cursor/
+.claude/
+
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+*.local

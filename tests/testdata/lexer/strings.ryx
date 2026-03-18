@@ -1,0 +1,32 @@
+// Regular strings
+"hello"
+""
+"hello world"
+
+// Escape sequences
+"newline\n"
+"tab\there"
+"carriage\rreturn"
+"backslash\\"
+"quote\""
+"null\0"
+
+// Unicode escapes
+"\u{0041}"
+"\u{1F600}"
+"\u{0000}"
+
+// Raw strings
+r"hello"
+r"no\nescape"
+r"path\to\file"
+r""
+
+// Char literals
+'a'
+'Z'
+'\n'
+'\t'
+'\\'
+'\0'
+'\u{0041}'

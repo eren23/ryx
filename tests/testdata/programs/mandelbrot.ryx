@@ -1,0 +1,27 @@
+// Mandelbrot set escape iteration computation
+
+fn mandelbrot_escape(cr: Float, ci: Float, max_iter: Int) -> Int {
+    let mut zr = 0.0;
+    let mut zi = 0.0;
+    let mut i = 0;
+    while i < max_iter {
+        let zr2 = zr * zr;
+        let zi2 = zi * zi;
+        if zr2 + zi2 > 4.0 {
+            return i;
+        };
+        zi = 2.0 * zr * zi + ci;
+        zr = zr2 - zi2 + cr;
+        i = i + 1;
+    };
+    max_iter
+}
+
+fn main() {
+    // Origin: always in set
+    println(mandelbrot_escape(0.0, 0.0, 100));
+    // (2,0): escapes at iteration 2
+    println(mandelbrot_escape(2.0, 0.0, 100));
+    // (-1,0): period-2 point, in set
+    println(mandelbrot_escape(-1.0, 0.0, 100))
+}

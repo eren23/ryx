@@ -1,0 +1,54 @@
+// Concurrency — spawn and channel expressions
+
+fn main() {
+    // Typed buffered channel
+    let ch = channel<Int>(10);
+
+    // Typed unbuffered channel
+    let unbuf = channel<String>();
+
+    // Untyped channel
+    let raw = channel();
+
+    // Spawn with block
+    spawn {
+        ch;
+    };
+
+    // Spawn doing work
+    spawn {
+        for i in 0..100 {
+            ch;
+        };
+    };
+
+    // Multiple spawns
+    let ch1 = channel<Int>(5);
+    let ch2 = channel<Int>(5);
+
+    spawn {
+        for i in 0..10 {
+            ch1;
+        };
+    };
+
+    spawn {
+        for i in 0..10 {
+            ch2;
+        };
+    };
+
+    // Channel with complex type
+    let complex_ch = channel<(Int, String)>(100);
+
+    // Spawn with nested control flow
+    spawn {
+        let mut count = 0;
+        while count < 100 {
+            if count % 2 == 0 {
+                ch;
+            };
+            count = count + 1;
+        };
+    };
+}

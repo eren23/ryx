@@ -1,0 +1,19 @@
+// Unknown characters
+@
+#
+$
+
+// Incomplete hex
+0x
+
+// Incomplete binary
+0b
+
+// Incomplete octal
+0o
+
+// Unterminated string
+"unterminated
+
+// Empty char
+''

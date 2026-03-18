@@ -1,0 +1,71 @@
+// Simple hash map simulation using arrays and modulo hashing
+
+fn hash(key: Int, size: Int) -> Int {
+    let h = key % size;
+    if h < 0 {
+        h + size
+    } else {
+        h
+    }
+}
+
+fn main() {
+    // Simulate a hash map with parallel arrays for keys, values, and occupied flags
+    // Using fixed-size buckets (size 16) with linear probing
+
+    let mut keys = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut vals = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut used = [false, false, false, false, false, false, false, false,
+                    false, false, false, false, false, false, false, false];
+    let size = 16;
+
+    // Insert key=5, value=50
+    let idx0 = hash(5, size);
+    keys[idx0] = 5;
+    vals[idx0] = 50;
+    used[idx0] = true;
+
+    // Insert key=21, value=210
+    let idx1 = hash(21, size);
+    keys[idx1] = 21;
+    vals[idx1] = 210;
+    used[idx1] = true;
+
+    // Insert key=37, value=370
+    let idx2 = hash(37, size);
+    keys[idx2] = 37;
+    vals[idx2] = 370;
+    used[idx2] = true;
+
+    // Lookup key=5
+    let l0 = hash(5, size);
+    if used[l0] && keys[l0] == 5 {
+        println(vals[l0]);
+    } else {
+        println(0);
+    };
+
+    // Lookup key=21
+    let l1 = hash(21, size);
+    if used[l1] && keys[l1] == 21 {
+        println(vals[l1]);
+    } else {
+        println(0);
+    };
+
+    // Lookup key=37
+    let l2 = hash(37, size);
+    if used[l2] && keys[l2] == 37 {
+        println(vals[l2]);
+    } else {
+        println(0);
+    };
+
+    // Lookup missing key=99
+    let l3 = hash(99, size);
+    if used[l3] && keys[l3] == 99 {
+        println(vals[l3]);
+    } else {
+        println(0);
+    }
+}

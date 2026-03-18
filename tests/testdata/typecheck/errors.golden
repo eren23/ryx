@@ -1,0 +1,25 @@
+parse_errors: 0
+resolver_errors: 0
+resolver_warnings: 27
+type_errors: 15
+type_warnings: 0
+
+--- diagnostics ---
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `Int`, found `Bool`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `Int`, found `Bool`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `String`, found `Int`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E102] error: type mismatch: expected `String`, found `Int`
+  [E102] error: type mismatch: expected `Int`, found `String`
+  [E142] error: missing field `y` in struct `Point`
+  [E141] error: struct `Point` has no field `z`
+  [E101] error: function arity mismatch: expected 2 parameters, found 1
+  [E102] error: type mismatch: expected `Int`, found `Bool`
+
+node_types: 51
+symbol_types: 30

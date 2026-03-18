@@ -1,0 +1,27 @@
+// Expression tree evaluator using algebraic data types
+
+type Expr {
+    Lit(Int),
+    Add(Expr, Expr),
+    Mul(Expr, Expr),
+    Neg(Expr),
+}
+
+fn evaluate(e: Expr) -> Int {
+    match e {
+        Lit(n) => n,
+        Add(a, b) => evaluate(a) + evaluate(b),
+        Mul(a, b) => evaluate(a) * evaluate(b),
+        Neg(a) => 0 - evaluate(a),
+    }
+}
+
+fn main() {
+    // (2 + 3) * -(4) = 5 * -4 = -20
+    let expr = Mul(Add(Lit(2), Lit(3)), Neg(Lit(4)));
+    println(evaluate(expr));
+
+    // 1 + 2 + 3 + 4 + 5 = 15
+    let sum_expr = Add(Add(Add(Add(Lit(1), Lit(2)), Lit(3)), Lit(4)), Lit(5));
+    println(evaluate(sum_expr))
+}
