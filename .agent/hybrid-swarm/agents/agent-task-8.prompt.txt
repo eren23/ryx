@@ -1,5 +1,21 @@
-# Task: Bytecode instruction set, codegen, binary format, and disassembler
+# Task: String stdlib expansion
 
-Implement pkg/codegen/bytecode.go: all 68 instruction definitions with opcode enum (0x00-0xFF), operand specs (slot/idx/count as u16, offset as i16, CONST_INT as i64, CONST_FLOAT as f64, CONST_CHAR as u32, JUMP_TABLE as u16 count + offsets). Implement pkg/codegen/codegen.go: MIR-to-bytecode emission (translate each MIR statement/terminator to instruction sequences, compute max stack depth per function, build string pool with deduplication, build function table with code offsets, generate source map entries). Implement pkg/codegen/encoder.go: binary format writer (VEX\0 magic, version u16, string pool, type pool, function table, code section, source map, entry point main_fn_idx). Implement pkg/codegen/decoder.go: binary format reader. Implement pkg/codegen/disasm.go: human-readable bytecode disassembler. Write codegen_test.go: opcode round-trip encoding/decoding, CONST_INT/FLOAT encoding, jump offsets, string pool dedup, function table offsets, source map correctness, disassembler output, binary format round-trip.
+Add 6 new string functions to pkg/stdlib/string_ops.go.
 
-Target files: pkg/codegen/bytecode.go, pkg/codegen/codegen.go, pkg/codegen/encoder.go, pkg/codegen/decoder.go, pkg/codegen/disasm.go, pkg/codegen/codegen_test.go
+1. StringIndexOf: 2 args (haystack, needle), returns codepoint index (not byte index) using strings.Index then utf8.RuneCountInString for conversion. Returns -1 if not found.
+
+2. StringRepeat: 2 args (string, n:Int), uses strings.Repeat, errors if n < 0.
+
+3. StringPadLeft: 3 args (string, width:Int, pad_char:Char), pads left with pad_char to reach width codepoints. Returns original if already >= width.
+
+4. StringPadRight: 3 args, same as PadLeft but pads on right.
+
+5. StringBytes: 1 arg (string), returns array of IntVal byte values from UTF-8 encoding.
+
+6. StringJoin: 2 args, delegates to ArrayJoin (same package, same signature).
+
+Imports needed: add "unicode/utf8" if not already imported (it is). May need "strings" (already imported).
+
+See goal spec section 7 for exact implementations and edge cases.
+
+Target files: pkg/stdlib/string_ops.go

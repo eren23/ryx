@@ -1,71 +1,28 @@
 {
   "task_id": "task-13",
-  "title": "Integration tests, e2e program tests, and example programs",
-  "description": "Write all 24 example/test .vex programs with .expected output files in tests/testdata/programs/ (hello, fibonacci, quicksort, binary_tree, linked_list, hash_map, closures, pattern_matching, traits, generics_complex, channels_basic, channels_fanout, producer_consumer, dining_philosophers, pipeline, adt_expression, game_of_life, json_parser, brainfuck_interp, mandelbrot, red_black_tree, sieve_of_eratosthenes, graph_bfs, matrix_multiply). Implement tests/integration/e2e_test.go: compile each .vex, run in VM, compare stdout to .expected. Implement concurrency_test.go (100-fiber counter, fan-out/fan-in, pipeline, deadlock detection, 1000 fibers). Implement gc_stress_test.go (1M objects, closure chains, concurrent allocation, write barrier under GC, pause time p99 < 10ms). Implement error_message_test.go (verify all documented error formats). Implement regression_test.go (placeholder). Write 5 examples/ programs (hello, calculator, todo_list, concurrent_primes, expression_evaluator). Write benchmarks in tests/benchmark/ (lexer, parser, typecheck, codegen, VM dispatch, fibonacci, quicksort, GC pause, GC throughput, end-to-end).",
-  "status": "done",
-  "task_kind": "implement",
-  "role_hint": "testing",
+  "title": "Array, string, and filesystem unit tests",
+  "description": "Add unit tests for the new array, string, and filesystem expansion functions.\n\nArray tests (see spec section 9.3):\n- array_sum([3,1,4,1,5])=14(Int), array_sum([])=0, array_sum with floats\n- array_min/max with values, error on empty\n- array_any/array_all with predicates (requires setting up CallbackInvoker or testing without it using direct function calls)\n- array_take/drop with normal, oversized, and zero counts\n- array_chunk: normal case, empty array, error on size<=0\n- array_unique preserves order, removes duplicates\n- array_join with separator, empty array returns \"\"\n- array_slice with positive, negative indices, clamping\n- array_find: found and not-found cases\n\nString tests (see spec section 9.4):\n- string_index_of: found, not found, empty needle\n- string_repeat: normal, zero count, negative errors\n- string_pad_left/right: padding needed, already wide enough\n- string_bytes(\"ABC\")=[65,66,67]\n\nFilesystem tests (see spec section 9.6):\n- file_exists(\"/tmp\")=true, file_exists(\"/nonexistent\")=false\n- dir_create + dir_list on temp directory\n- path_join, path_dirname, path_basename, path_extension\n- file_size with temp file\n\nNote: array_any/all/find tests need CallbackInvoker. If testing at stdlib level without VM, you may need to set up a mock CallbackInvoker or test these only via integration tests.",
+  "status": "pending",
+  "task_kind": "test",
+  "role_hint": "impl-codex",
   "deps": [
-    "task-12"
+    "task-7",
+    "task-8",
+    "task-9",
+    "task-10"
   ],
   "target_files": [
-    "tests/testdata/programs/hello.vex",
-    "tests/testdata/programs/fibonacci.vex",
-    "tests/testdata/programs/quicksort.vex",
-    "tests/testdata/programs/binary_tree.vex",
-    "tests/testdata/programs/closures.vex",
-    "tests/testdata/programs/pattern_matching.vex",
-    "tests/testdata/programs/traits.vex",
-    "tests/testdata/programs/channels_basic.vex",
-    "tests/testdata/programs/pipeline.vex",
-    "tests/testdata/programs/sieve_of_eratosthenes.vex",
-    "tests/integration/e2e_test.go",
-    "tests/integration/concurrency_test.go",
-    "tests/integration/gc_stress_test.go",
-    "tests/integration/error_message_test.go",
-    "tests/integration/regression_test.go",
-    "tests/integration/stdlib_test.go",
-    "tests/benchmark/bench_lexer_test.go",
-    "tests/benchmark/bench_vm_test.go",
-    "tests/benchmark/bench_gc_test.go",
-    "tests/benchmark/bench_programs_test.go",
-    "examples/hello.vex",
-    "examples/calculator.vex",
-    "examples/concurrent_primes.vex",
-    "examples/expression_evaluator.vex"
+    "pkg/stdlib/array_ops_test.go",
+    "pkg/stdlib/string_ops_test.go",
+    "pkg/stdlib/io_test.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e41b83d1-6295-4cbc-a871-48839b13428d\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"cc7f6e2b-b32c-4a6b-8dcd-9b37d6a8f788\",\"session_id\":\"176c1d04-d1a0-4de3-9dd7-9a430d464d0b\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"e41b83d1-6295-4cbc-a871-48839b13428d\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "result_summary": "",
   "symbol_scope": [],
-  "tokens_used": 7293,
+  "tokens_used": 0,
   "cost_usd": 0.0,
-  "attempt_count": 3,
-  "attempt_history": [
-    {
-      "attempt": 1,
-      "error": "Task timed out after 600.0s",
-      "timestamp": "2026-03-17T22:27:44.054941+00:00",
-      "duration_s": 600.0114233493805,
-      "tokens_used": 0,
-      "failure_cause": "timeout"
-    },
-    {
-      "attempt": 2,
-      "error": "Task timed out after 600.0s",
-      "timestamp": "2026-03-17T22:37:44.092046+00:00",
-      "duration_s": 600.0157942771912,
-      "tokens_used": 0,
-      "failure_cause": "timeout"
-    },
-    {
-      "attempt": 3,
-      "error": "claude exited with code 1",
-      "timestamp": "2026-03-17T22:42:34.094038+00:00",
-      "duration_s": 289.99010491371155,
-      "tokens_used": 4481,
-      "failure_cause": "agent_error"
-    }
-  ],
+  "attempt_count": 0,
+  "attempt_history": [],
   "has_diff": false
 }

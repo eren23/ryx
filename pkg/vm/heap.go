@@ -81,6 +81,17 @@ func (h *Heap) AllocChannel(cap int) uint32 {
 	})
 }
 
+// AllocMap allocates a MapObj on the heap.
+func (h *Heap) AllocMap() uint32 {
+	return h.Alloc(HeapObject{
+		Header: ObjectHeader{TypeID: ObjMap, Size: 0},
+		Data: &MapObj{
+			Buckets: make(map[uint64][]MapEntry),
+			Count:   0,
+		},
+	})
+}
+
 // Len returns the number of heap objects.
 func (h *Heap) Len() int {
 	return len(h.Objects)

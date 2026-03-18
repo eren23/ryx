@@ -1,0 +1,5 @@
+# Task: CLI entry point, REPL, and compiler pipeline wiring
+
+Implement cmd/vex/main.go: CLI with subcommands (run, build, exec, repl, disasm, check, fmt) using flag parsing. Wire full compiler pipeline: source → lexer → parser → resolver → type checker → HIR lower → MIR build → optimize → codegen → VM exec. Support flags: --dump-ast, --dump-hir, --dump-mir, --dump-bytecode, --gc-stats, --trace, -o for output file. Load vex_config.toml and apply settings. Implement pkg/repl/repl.go: interactive REPL with persistent state across inputs, multi-line input on open brace, special commands (:type, :ast, :bytecode, :quit), compile+execute expressions. Write repl_test.go for REPL session tests.
+
+Target files: cmd/vex/main.go, pkg/repl/repl.go, pkg/repl/repl_test.go

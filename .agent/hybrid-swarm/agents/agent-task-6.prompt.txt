@@ -1,5 +1,22 @@
-# Task: HIR lowering with desugaring, monomorphization, and pattern compilation
+# Task: Time and random stdlib functions
 
-Implement pkg/hir/hir.go: HIR node types (desugared AST with fully resolved types, no type variables). Implement pkg/hir/lower.go: AST-to-HIR lowering with all desugarings (for-in-range to while+counter, for-in-channel to loop+recv, method calls to static dispatch, pipe operator to nested calls, string ++ to concat call). Implement pkg/hir/monomorphize.go: generic function/type instantiation producing one concrete copy per type combination, with 64-instance limit. Implement pkg/hir/match_compile.go: pattern match compilation to decision trees (correct dispatch, no redundant checks, guard clause handling, closure capture identification with captured vars becoming struct fields). Write hir_test.go covering all desugarings, monomorphization, match compilation, and closure transform.
+Create new file pkg/stdlib/time_ops.go with 5 functions.
 
-Target files: pkg/hir/hir.go, pkg/hir/lower.go, pkg/hir/monomorphize.go, pkg/hir/match_compile.go, pkg/hir/hir_test.go
+Package-level state:
+- var rng *rand.Rand with sync.Mutex protection
+- init() function that seeds rng with time.Now().UnixNano()
+
+Functions:
+1. TimeNowMs: 0 args, returns IntVal(time.Now().UnixMilli())
+2. SleepMs: 1 Int arg, errors if ms < 0, calls time.Sleep(Duration(ms)*Millisecond)
+3. RandomSeed: 1 Int arg, resets rng = rand.New(rand.NewSource(seed)) under lock
+4. RandomShuffle: 1 array arg, copies elements, Fisher-Yates shuffle using rng under lock, returns NEW array
+5. RandomChoice: 1 non-empty array arg, returns random element using rng.Intn under lock, errors on empty array
+
+IMPORTANT: The existing RandomInt and RandomFloat in math_ops.go use math/rand/v2 global state. These should ideally use the shared rng, but to avoid file conflicts, note this as a TODO in comments. The new random functions must use the package-level rng with mutex.
+
+Use the existing resolveArray helper from array_ops.go (same package, so it's accessible).
+
+Imports needed: "fmt", "math/rand", "sync", "time", "github.com/ryx-lang/ryx/pkg/vm"
+
+Target files: pkg/stdlib/time_ops.go

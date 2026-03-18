@@ -1,1 +1,1 @@
-All tests pass. The entire type system implementation is alr
+Running the affected tests.

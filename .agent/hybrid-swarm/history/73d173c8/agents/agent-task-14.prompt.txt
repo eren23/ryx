@@ -1,0 +1,5 @@
+# Task: README documentation and final polish
+
+Write comprehensive README.md covering: language tutorial (syntax, types, pattern matching, traits, closures, concurrency, error handling with code examples), architecture overview with compiler pipeline diagram (source → lexer → parser → resolver → type checker → HIR → MIR → optimize → codegen → VM), build and run instructions, REPL usage guide, bytecode instruction set reference (all 68 instructions), optimization passes explained, GC design and tuning guide, standard library reference (all 50+ functions and 6 traits), CLI reference (all subcommands and flags), test suite description with go test instructions, benchmark results and performance targets, config reference (vex_config.toml fields), grammar specification in EBNF, known limitations and future ideas (module system, incremental compilation, JIT, debugger, LSP server, package manager). Final pass: ensure go.mod dependencies are correct, all test files compile, project structure matches spec.
+
+Target files: README.md

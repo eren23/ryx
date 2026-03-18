@@ -75,9 +75,9 @@ type incompletePhi struct {
 }
 
 type loopContext struct {
-	header   BlockID // loop header (continue target)
-	exit     BlockID // loop exit (break target)
-	exitVal  LocalID // local to store break value (NoLocal if none)
+	header  BlockID // loop header (continue target)
+	exit    BlockID // loop exit (break target)
+	exitVal LocalID // local to store break value (NoLocal if none)
 }
 
 func buildFunction(hirFn *hir.Function, prog *hir.Program) *Function {
@@ -283,7 +283,8 @@ func isBuiltinName(name string) bool {
 		"assert", "assert_eq",
 		"eq", "neq", "compare", "to_string", "clone", "hash",
 		"abs", "min", "max", "sqrt", "pow", "floor", "ceil", "round",
-		"sin", "cos", "tan", "log", "log2", "log10",
+		"sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+		"log", "log2", "log10", "exp", "pi", "e", "gcd", "lcm", "clamp",
 		"string_chars", "string_contains", "string_split", "string_trim",
 		"string_replace", "string_starts_with", "string_ends_with",
 		"string_to_upper", "string_to_lower", "string_repeat", "string_reverse",

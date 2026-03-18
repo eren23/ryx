@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math"
 	"strings"
 )
@@ -120,6 +121,20 @@ func (v Value) Equal(other Value, heap *Heap) bool {
 			}
 		}
 		return true
+	case *MapObj:
+		sb := ob.Data.(*MapObj)
+		if sa.Count != sb.Count {
+			return false
+		}
+		for _, bucket := range sa.Buckets {
+			for _, entry := range bucket {
+				val, found, _ := sb.Get(entry.Key, heap)
+				if !found || !entry.Value.Equal(val, heap) {
+					return false
+				}
+			}
+		}
+		return true
 	default:
 		return false
 	}
@@ -178,6 +193,19 @@ func StringValue(v Value, heap *Heap) string {
 		return fmt.Sprintf("<closure func=%d>", o.FuncIdx)
 	case *ChannelObj:
 		return fmt.Sprintf("<channel cap=%d>", o.Cap)
+	case *MapObj:
+		if o.Count == 0 {
+			return "{}"
+		}
+		parts := make([]string, 0, o.Count)
+		for _, bucket := range o.Buckets {
+			for _, entry := range bucket {
+				k := StringValue(entry.Key, heap)
+				v := StringValue(entry.Value, heap)
+				parts = append(parts, k+": "+v)
+			}
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		return "<object>"
 	}
@@ -195,6 +223,7 @@ const (
 	ObjEnum    byte = 0x24
 	ObjClosure byte = 0x25
 	ObjChannel byte = 0x26
+	ObjMap     byte = 0x27
 )
 
 // ObjectHeader is the common header for all heap-allocated objects.
@@ -292,4 +321,128 @@ type ChannelObj struct {
 	SendQ    []*Fiber // fibers blocked waiting to send
 	RecvQ    []*Fiber // fibers blocked waiting to receive
 	SendVals []Value  // values from blocked senders (parallel to SendQ)
+}
+
+// MapEntry represents one key-value pair in a hash bucket.
+type MapEntry struct {
+	Key   Value
+	Value Value
+}
+
+// MapObj is a hash map from any hashable Value to any Value.
+// Uses FNV-1a hashing and separate chaining with Go slices for collision resolution.
+type MapObj struct {
+	Buckets map[uint64][]MapEntry // hash → chain of entries
+	Count   int                   // number of entries (O(1) len)
+}
+
+// ComputeHash returns the FNV-1a hash of a Value.
+// Errors on unhashable types (Closure, Channel).
+func ComputeHash(v Value, heap *Heap) (uint64, error) {
+	if v.Tag == TagObj {
+		obj := heap.Get(v.AsObj())
+		switch obj.Data.(type) {
+		case *ClosureObj:
+			return 0, fmt.Errorf("unhashable type: closure")
+		case *ChannelObj:
+			return 0, fmt.Errorf("unhashable type: channel")
+		}
+	}
+	h := fnv.New64a()
+	hashValue(v, heap, h)
+	return h.Sum64(), nil
+}
+
+// Get retrieves the value for key. Returns (value, true) if found,
+// (UnitVal(), false) if not found.
+func (m *MapObj) Get(key Value, heap *Heap) (Value, bool, error) {
+	hash, err := ComputeHash(key, heap)
+	if err != nil {
+		return UnitVal(), false, err
+	}
+	bucket := m.Buckets[hash]
+	for _, entry := range bucket {
+		if entry.Key.Equal(key, heap) {
+			return entry.Value, true, nil
+		}
+	}
+	return UnitVal(), false, nil
+}
+
+// Set inserts or updates a key-value pair. Returns true if the key
+// was newly inserted, false if it was updated.
+func (m *MapObj) Set(key, value Value, heap *Heap) (bool, error) {
+	hash, err := ComputeHash(key, heap)
+	if err != nil {
+		return false, err
+	}
+	bucket := m.Buckets[hash]
+	for i, entry := range bucket {
+		if entry.Key.Equal(key, heap) {
+			m.Buckets[hash][i].Value = value
+			return false, nil // updated existing
+		}
+	}
+	m.Buckets[hash] = append(bucket, MapEntry{Key: key, Value: value})
+	m.Count++
+	return true, nil // newly inserted
+}
+
+// Delete removes a key. Returns true if the key existed.
+func (m *MapObj) Delete(key Value, heap *Heap) (bool, error) {
+	hash, err := ComputeHash(key, heap)
+	if err != nil {
+		return false, err
+	}
+	bucket := m.Buckets[hash]
+	for i, entry := range bucket {
+		if entry.Key.Equal(key, heap) {
+			// Remove by swapping with last element
+			m.Buckets[hash][i] = m.Buckets[hash][len(bucket)-1]
+			m.Buckets[hash] = m.Buckets[hash][:len(bucket)-1]
+			if len(m.Buckets[hash]) == 0 {
+				delete(m.Buckets, hash)
+			}
+			m.Count--
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Contains checks if a key exists. O(1) average case.
+func (m *MapObj) Contains(key Value, heap *Heap) (bool, error) {
+	_, found, err := m.Get(key, heap)
+	return found, err
+}
+
+// Keys returns all keys as a slice of Values.
+func (m *MapObj) Keys() []Value {
+	keys := make([]Value, 0, m.Count)
+	for _, bucket := range m.Buckets {
+		for _, entry := range bucket {
+			keys = append(keys, entry.Key)
+		}
+	}
+	return keys
+}
+
+// Values returns all values as a slice of Values.
+func (m *MapObj) Values() []Value {
+	vals := make([]Value, 0, m.Count)
+	for _, bucket := range m.Buckets {
+		for _, entry := range bucket {
+			vals = append(vals, entry.Value)
+		}
+	}
+	return vals
+}
+
+// Entries returns all entries as a slice of MapEntry pairs.
+func (m *MapObj) Entries() []MapEntry {
+	entries := make([]MapEntry, 0, m.Count)
+	for _, bucket := range m.Buckets {
+		entries = append(entries, bucket...)
+	}
+	return entries
 }

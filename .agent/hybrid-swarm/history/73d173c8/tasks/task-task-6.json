@@ -1,0 +1,140 @@
+{
+  "task_id": "task-6",
+  "title": "HIR lowering with desugaring, monomorphization, and pattern compilation",
+  "description": "Implement pkg/hir/hir.go: HIR node types (desugared AST with fully resolved types, no type variables). Implement pkg/hir/lower.go: AST-to-HIR lowering with all desugarings (for-in-range to while+counter, for-in-channel to loop+recv, method calls to static dispatch, pipe operator to nested calls, string ++ to concat call). Implement pkg/hir/monomorphize.go: generic function/type instantiation producing one concrete copy per type combination, with 64-instance limit. Implement pkg/hir/match_compile.go: pattern match compilation to decision trees (correct dispatch, no redundant checks, guard clause handling, closure capture identification with captured vars becoming struct fields). Write hir_test.go covering all desugarings, monomorphization, match compilation, and closure transform.",
+  "status": "done",
+  "task_kind": "implement",
+  "role_hint": "compiler-middle",
+  "deps": [
+    "task-5"
+  ],
+  "target_files": [
+    "pkg/hir/hir.go",
+    "pkg/hir/lower.go",
+    "pkg/hir/monomorphize.go",
+    "pkg/hir/match_compile.go",
+    "pkg/hir/hir_test.go"
+  ],
+  "read_files": [],
+  "files_modified": [],
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"beadbf4d-2ab7-425e-ae29-2ec67fb4d572\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"35b2dc18-9dd3-4060-9128-74b7ea0a5bb2\",\"session_id\":\"29cfc221-b415-4f86-86c6-079a472e801a\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"beadbf4d-2ab7-425e-ae29-2ec67fb4d572\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
+  "symbol_scope": [],
+  "tokens_used": 7214,
+  "cost_usd": 0.0,
+  "attempt_count": 14,
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T19:36:36.358296+00:00",
+      "duration_s": 41.006481885910034,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 2,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T19:46:36.378948+00:00",
+      "duration_s": 600.0071806907654,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 3,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T19:50:40.742570+00:00",
+      "duration_s": 244.3441071510315,
+      "tokens_used": 484,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 4,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T20:00:40.766479+00:00",
+      "duration_s": 600.0082581043243,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    },
+    {
+      "attempt": 5,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:09:15.344764+00:00",
+      "duration_s": 514.5582089424133,
+      "tokens_used": 10302,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 6,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:10:08.566431+00:00",
+      "duration_s": 53.20482897758484,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 7,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:10:51.055313+00:00",
+      "duration_s": 42.47190999984741,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 8,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:11:33.187529+00:00",
+      "duration_s": 42.11492204666138,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 9,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:12:15.545464+00:00",
+      "duration_s": 42.340332984924316,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 10,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:12:54.331247+00:00",
+      "duration_s": 38.76835083961487,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 11,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:13:52.869503+00:00",
+      "duration_s": 58.52163910865784,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 12,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:14:38.404349+00:00",
+      "duration_s": 45.51836800575256,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 13,
+      "error": "claude exited with code 1",
+      "timestamp": "2026-03-17T20:18:06.674891+00:00",
+      "duration_s": 208.2533299922943,
+      "tokens_used": 0,
+      "failure_cause": "agent_error"
+    },
+    {
+      "attempt": 14,
+      "error": "Task timed out after 600.0s",
+      "timestamp": "2026-03-17T20:28:06.698163+00:00",
+      "duration_s": 600.0057098865509,
+      "tokens_used": 0,
+      "failure_cause": "timeout"
+    }
+  ],
+  "has_diff": false
+}

@@ -1,0 +1,8 @@
+{
+  "pkg/vm/value.go": "d1ece80ef4318fc777583878d7f70448e46a887a13155fd4872d3c8656d20c82",
+  "pkg/vm/heap.go": "9e56520827089a97c0a64d78f1ad05fd2081afe3e4410f622c26576ee6dcd6b4",
+  "pkg/stdlib/math_ops.go": "e0e1e5d3780b41596658df3396894c69cede65f09f026894b60d283179e6c590",
+  "pkg/stdlib/array_ops.go": "1cd6ceaff0efe18e8d726d612571b047af30c56a6cbfc50507ad3b5467913514",
+  "pkg/stdlib/string_ops.go": "01855d19337546b953735292ac27bbd3fe96b412edef8c87a8553cae961dd14a",
+  "pkg/stdlib/io.go": "9864fa1011844cb0feba2f4994892b5c1ae4e3e6c9472bfaf75012569726c77b"
+}

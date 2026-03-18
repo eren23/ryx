@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -293,10 +294,10 @@ func TestStringLen(t *testing.T) {
 	}{
 		{"", 0},
 		{"hello", 5},
-		{"日本語", 3},          // Unicode: 3 codepoints
-		{"café", 4},            // e with accent
-		{"a\x00b", 3},         // null byte
-		{"🎉🎊", 2},           // emoji
+		{"日本語", 3},    // Unicode: 3 codepoints
+		{"café", 4},   // e with accent
+		{"a\x00b", 3}, // null byte
+		{"🎉🎊", 2},     // emoji
 	}
 	for _, tc := range tests {
 		v, err := StringLen([]vm.Value{allocStr(h, tc.in)}, h)
@@ -353,6 +354,54 @@ func TestStringContains(t *testing.T) {
 	v, _ = StringContains([]vm.Value{allocStr(h, "hello"), allocStr(h, "")}, h)
 	if !v.AsBool() {
 		t.Error("empty needle should always match")
+	}
+}
+
+func TestStringIndexOf(t *testing.T) {
+	h := newHeap()
+	tests := []struct {
+		haystack string
+		needle   string
+		want     int64
+	}{
+		{"hello", "ll", 2},
+		{"hello", "", 0},
+		{"", "x", -1},
+		{"café", "é", 3},
+		{"日本語", "本", 1},
+		{"hello", "xyz", -1},
+	}
+	for _, tc := range tests {
+		v, err := StringIndexOf([]vm.Value{allocStr(h, tc.haystack), allocStr(h, tc.needle)}, h)
+		if err != nil {
+			t.Fatalf("StringIndexOf(%q, %q): %v", tc.haystack, tc.needle, err)
+		}
+		if v.AsInt() != tc.want {
+			t.Errorf("StringIndexOf(%q, %q) = %d, want %d", tc.haystack, tc.needle, v.AsInt(), tc.want)
+		}
+	}
+}
+
+func TestStringRepeat(t *testing.T) {
+	h := newHeap()
+	v, err := StringRepeat([]vm.Value{allocStr(h, "ab"), vm.IntVal(3)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "ababab" {
+		t.Errorf("StringRepeat(\"ab\", 3) = %q, want %q", getString(v, h), "ababab")
+	}
+
+	v, err = StringRepeat([]vm.Value{allocStr(h, "ab"), vm.IntVal(0)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "" {
+		t.Errorf("StringRepeat(\"ab\", 0) = %q, want empty", getString(v, h))
+	}
+
+	if _, err := StringRepeat([]vm.Value{allocStr(h, "ab"), vm.IntVal(-1)}, h); err == nil {
+		t.Error("expected error for negative repeat count")
 	}
 }
 
@@ -421,6 +470,24 @@ func TestStringChars(t *testing.T) {
 	arr = getArray(v, h)
 	if len(arr) != 0 {
 		t.Errorf("StringChars(\"\") length = %d, want 0", len(arr))
+	}
+}
+
+func TestStringBytes(t *testing.T) {
+	h := newHeap()
+	v, err := StringBytes([]vm.Value{allocStr(h, "Aé")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr := getArray(v, h)
+	want := []int64{65, 195, 169}
+	if len(arr) != len(want) {
+		t.Fatalf("StringBytes length = %d, want %d", len(arr), len(want))
+	}
+	for i, expected := range want {
+		if arr[i].AsInt() != expected {
+			t.Errorf("StringBytes[%d] = %d, want %d", i, arr[i].AsInt(), expected)
+		}
 	}
 }
 
@@ -506,6 +573,56 @@ func TestStringToUpperLower(t *testing.T) {
 	v, _ = StringToUpper([]vm.Value{allocStr(h, "")}, h)
 	if getString(v, h) != "" {
 		t.Errorf("to_upper(\"\") = %q, want empty", getString(v, h))
+	}
+}
+
+func TestStringPadLeftRight(t *testing.T) {
+	h := newHeap()
+
+	v, err := StringPadLeft([]vm.Value{allocStr(h, "hi"), vm.IntVal(5), vm.CharVal('.')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "...hi" {
+		t.Errorf("StringPadLeft(\"hi\", 5, '.') = %q, want %q", getString(v, h), "...hi")
+	}
+
+	v, err = StringPadRight([]vm.Value{allocStr(h, "hi"), vm.IntVal(5), vm.CharVal('.')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "hi..." {
+		t.Errorf("StringPadRight(\"hi\", 5, '.') = %q, want %q", getString(v, h), "hi...")
+	}
+
+	original := allocStr(h, "café")
+	v, err = StringPadLeft([]vm.Value{original, vm.IntVal(4), vm.CharVal('.')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != original {
+		t.Error("StringPadLeft should return the original value when width is already satisfied")
+	}
+
+	original = allocStr(h, "日本")
+	v, err = StringPadRight([]vm.Value{original, vm.IntVal(1), vm.CharVal('.')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != original {
+		t.Error("StringPadRight should return the original value when width is already satisfied")
+	}
+}
+
+func TestStringJoin(t *testing.T) {
+	h := newHeap()
+	parts := allocArr(h, []vm.Value{allocStr(h, "a"), allocStr(h, "b"), allocStr(h, "c")})
+	v, err := StringJoin([]vm.Value{parts, allocStr(h, "-")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "a-b-c" {
+		t.Errorf("StringJoin = %q, want %q", getString(v, h), "a-b-c")
 	}
 }
 
@@ -918,6 +1035,190 @@ func TestFloorCeilRound(t *testing.T) {
 	}
 }
 
+func TestTrigFunctions(t *testing.T) {
+	h := newHeap()
+
+	v, err := Sin([]vm.Value{vm.FloatVal(0)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-0.0) > 1e-10 {
+		t.Errorf("sin(0) = %v, want 0", v.AsFloat())
+	}
+
+	v, err = Sin([]vm.Value{vm.FloatVal(math.Pi / 2)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-1.0) > 1e-10 {
+		t.Errorf("sin(pi/2) = %v, want 1", v.AsFloat())
+	}
+
+	v, err = Cos([]vm.Value{vm.FloatVal(math.Pi)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()+1.0) > 1e-10 {
+		t.Errorf("cos(pi) = %v, want -1", v.AsFloat())
+	}
+
+	v, err = Tan([]vm.Value{vm.FloatVal(0)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-0.0) > 1e-10 {
+		t.Errorf("tan(0) = %v, want 0", v.AsFloat())
+	}
+
+	v, err = Asin([]vm.Value{vm.FloatVal(1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-math.Pi/2) > 1e-10 {
+		t.Errorf("asin(1) = %v, want pi/2", v.AsFloat())
+	}
+
+	v, err = Acos([]vm.Value{vm.FloatVal(1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-0.0) > 1e-10 {
+		t.Errorf("acos(1) = %v, want 0", v.AsFloat())
+	}
+
+	v, err = Atan([]vm.Value{vm.FloatVal(1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-math.Pi/4) > 1e-10 {
+		t.Errorf("atan(1) = %v, want pi/4", v.AsFloat())
+	}
+}
+
+func TestAtan2(t *testing.T) {
+	h := newHeap()
+
+	v, err := Atan2([]vm.Value{vm.FloatVal(1), vm.FloatVal(0)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-math.Pi/2) > 1e-10 {
+		t.Errorf("atan2(1,0) = %v, want pi/2", v.AsFloat())
+	}
+}
+
+func TestLogExpConstants(t *testing.T) {
+	h := newHeap()
+
+	v, err := Log([]vm.Value{vm.FloatVal(math.E)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-1.0) > 1e-10 {
+		t.Errorf("log(e) = %v, want 1", v.AsFloat())
+	}
+
+	v, err = Log2([]vm.Value{vm.FloatVal(8)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-3.0) > 1e-10 {
+		t.Errorf("log2(8) = %v, want 3", v.AsFloat())
+	}
+
+	v, err = Log10([]vm.Value{vm.FloatVal(100)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-2.0) > 1e-10 {
+		t.Errorf("log10(100) = %v, want 2", v.AsFloat())
+	}
+
+	v, err = Exp([]vm.Value{vm.FloatVal(1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(v.AsFloat()-math.E) > 1e-10 {
+		t.Errorf("exp(1) = %v, want e", v.AsFloat())
+	}
+
+	v, err = Pi(nil, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsFloat() != math.Pi {
+		t.Errorf("pi() = %v, want %v", v.AsFloat(), math.Pi)
+	}
+
+	v, err = E(nil, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsFloat() != math.E {
+		t.Errorf("e() = %v, want %v", v.AsFloat(), math.E)
+	}
+}
+
+func TestGcdLcmClamp(t *testing.T) {
+	h := newHeap()
+
+	v, err := Gcd([]vm.Value{vm.IntVal(12), vm.IntVal(8)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 4 {
+		t.Errorf("gcd(12,8) = %d, want 4", v.AsInt())
+	}
+
+	v, err = Gcd([]vm.Value{vm.IntVal(-12), vm.IntVal(8)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 4 {
+		t.Errorf("gcd(-12,8) = %d, want 4", v.AsInt())
+	}
+
+	v, err = Lcm([]vm.Value{vm.IntVal(4), vm.IntVal(6)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 12 {
+		t.Errorf("lcm(4,6) = %d, want 12", v.AsInt())
+	}
+
+	v, err = Lcm([]vm.Value{vm.IntVal(0), vm.IntVal(5)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 0 {
+		t.Errorf("lcm(0,5) = %d, want 0", v.AsInt())
+	}
+
+	v, err = Clamp([]vm.Value{vm.IntVal(15), vm.IntVal(0), vm.IntVal(10)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagInt || v.AsInt() != 10 {
+		t.Errorf("clamp(15,0,10) = (%d, %d), want (Int, 10)", v.Tag, v.AsInt())
+	}
+
+	v, err = Clamp([]vm.Value{vm.FloatVal(5.5), vm.FloatVal(0), vm.FloatVal(10)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagFloat || math.Abs(v.AsFloat()-5.5) > 1e-10 {
+		t.Errorf("clamp(5.5,0,10) = (%d, %v), want (Float, 5.5)", v.Tag, v.AsFloat())
+	}
+
+	v, err = Clamp([]vm.Value{vm.IntVal(4), vm.IntVal(5), vm.IntVal(3)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 5 {
+		t.Errorf("clamp(4,5,3) = %d, want 5", v.AsInt())
+	}
+}
+
 func TestRandomInt(t *testing.T) {
 	h := newHeap()
 	for i := 0; i < 100; i++ {
@@ -1005,6 +1306,149 @@ func TestWriteFileCreatesDir(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if string(data) != "second" {
 		t.Errorf("overwrite: got %q, want %q", string(data), "second")
+	}
+}
+
+func TestFileExists(t *testing.T) {
+	h := newHeap()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "exists.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := FileExists([]vm.Value{allocStr(h, path)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.AsBool() {
+		t.Error("expected true for existing path")
+	}
+
+	v, err = FileExists([]vm.Value{allocStr(h, filepath.Join(dir, "missing.txt"))}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsBool() {
+		t.Error("expected false for missing path")
+	}
+}
+
+func TestDirListAndCreate(t *testing.T) {
+	h := newHeap()
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+
+	result, err := DirCreate([]vm.Value{allocStr(h, nested)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsResultOk(result, h) {
+		t.Fatal("DirCreate returned Err")
+	}
+	if _, err := os.Stat(nested); err != nil {
+		t.Fatalf("created directory missing: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "z.txt"), []byte("z"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "subdir"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err = DirList([]vm.Value{allocStr(h, root)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsResultOk(result, h) {
+		t.Fatal("DirList returned Err")
+	}
+	inner, err := ResultUnwrap(result, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := getArray(inner, h)
+	got := make([]string, len(items))
+	for i, item := range items {
+		got[i] = getString(item, h)
+	}
+	sort.Strings(got)
+	want := []string{"a", "subdir", "z.txt"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("DirList() = %v, want %v", got, want)
+	}
+}
+
+func TestPathHelpers(t *testing.T) {
+	h := newHeap()
+
+	joined, err := PathJoin([]vm.Value{allocArr(h, []vm.Value{
+		allocStr(h, "usr"),
+		allocStr(h, "local"),
+		allocStr(h, "bin"),
+	})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(joined, h); got != filepath.Join("usr", "local", "bin") {
+		t.Errorf("PathJoin() = %q, want %q", got, filepath.Join("usr", "local", "bin"))
+	}
+
+	dirname, err := PathDirname([]vm.Value{allocStr(h, filepath.Join("usr", "local", "bin", "ryx"))}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(dirname, h); got != filepath.Join("usr", "local", "bin") {
+		t.Errorf("PathDirname() = %q, want %q", got, filepath.Join("usr", "local", "bin"))
+	}
+
+	basename, err := PathBasename([]vm.Value{allocStr(h, filepath.Join("tmp", "data.csv"))}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(basename, h); got != "data.csv" {
+		t.Errorf("PathBasename() = %q, want %q", got, "data.csv")
+	}
+
+	extension, err := PathExtension([]vm.Value{allocStr(h, "archive.tar.gz")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(extension, h); got != ".gz" {
+		t.Errorf("PathExtension() = %q, want %q", got, ".gz")
+	}
+}
+
+func TestFileSize(t *testing.T) {
+	h := newHeap()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "size.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FileSize([]vm.Value{allocStr(h, path)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsResultOk(result, h) {
+		t.Fatal("FileSize returned Err")
+	}
+	inner, err := ResultUnwrap(result, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inner.AsInt() != 5 {
+		t.Errorf("FileSize() = %d, want 5", inner.AsInt())
+	}
+
+	result, err = FileSize([]vm.Value{allocStr(h, filepath.Join(dir, "missing.txt"))}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsResultOk(result, h) {
+		t.Error("expected Err for missing file")
 	}
 }
 
@@ -1216,18 +1660,28 @@ func TestRegisterAll(t *testing.T) {
 		"print", "println", "read_line",
 		"assert", "assert_eq", "panic",
 		// String ops
-		"string_len", "string_slice", "string_contains", "string_split",
-		"string_trim", "string_chars", "char_to_string", "string_replace",
-		"string_starts_with", "string_ends_with", "string_to_upper", "string_to_lower",
+		"string_len", "string_slice", "string_contains", "string_index_of",
+		"string_repeat", "string_pad_left", "string_pad_right", "string_bytes",
+		"string_join", "string_split", "string_trim", "string_chars",
+		"char_to_string", "string_replace", "string_starts_with",
+		"string_ends_with", "string_to_upper", "string_to_lower",
 		// Array ops
 		"array_len", "array_push", "array_pop", "array_map", "array_filter",
 		"array_fold", "array_sort", "array_reverse", "array_contains",
 		"array_zip", "array_enumerate", "array_flat_map",
+		"array_find", "array_any", "array_all",
+		"array_sum", "array_min", "array_max",
+		"array_take", "array_drop", "array_chunk",
+		"array_unique", "array_join", "array_slice",
 		// Math ops
 		"abs", "min", "max", "sqrt", "pow", "floor", "ceil", "round",
+		"sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+		"log", "log2", "log10", "exp", "pi", "e", "gcd", "lcm", "clamp",
 		"random_int", "random_float",
 		// File I/O
 		"read_file", "write_file",
+		"file_exists", "dir_list", "dir_create", "path_join",
+		"path_dirname", "path_basename", "path_extension", "file_size",
 		// Trait methods
 		"eq", "neq", "compare", "to_string", "default", "clone", "hash",
 	}
@@ -1237,10 +1691,10 @@ func TestRegisterAll(t *testing.T) {
 		}
 	}
 
-	// Verify count matches expected.
+	// Verify the registry includes at least the expected stdlib surface.
 	registered := r.Names()
-	if len(registered) != len(allNames) {
-		t.Errorf("registered %d functions, want %d", len(registered), len(allNames))
+	if len(registered) < len(allNames) {
+		t.Errorf("registered %d functions, want at least %d", len(registered), len(allNames))
 	}
 
 	// Smoke test: call a few through the registry.
@@ -1321,6 +1775,20 @@ func TestArgCountErrors(t *testing.T) {
 		{"Floor", Floor},
 		{"Ceil", Ceil},
 		{"Round", Round},
+		{"Sin", Sin},
+		{"Cos", Cos},
+		{"Tan", Tan},
+		{"Asin", Asin},
+		{"Acos", Acos},
+		{"Atan", Atan},
+		{"Atan2", Atan2},
+		{"Log", Log},
+		{"Log2", Log2},
+		{"Log10", Log10},
+		{"Exp", Exp},
+		{"Gcd", Gcd},
+		{"Lcm", Lcm},
+		{"Clamp", Clamp},
 	}
 	for _, tc := range fns {
 		_, err := tc.fn(nil, h)

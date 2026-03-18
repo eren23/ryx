@@ -72,6 +72,49 @@ func StringContains(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	return vm.BoolVal(strings.Contains(haystack, needle)), nil
 }
 
+// StringIndexOf returns the codepoint index of the first occurrence of needle in haystack.
+func StringIndexOf(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("string_index_of: expected 2 args, got %d", len(args))
+	}
+	haystack, err := resolveString(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_index_of: %w", err)
+	}
+	needle, err := resolveString(args[1], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_index_of: %w", err)
+	}
+
+	byteIdx := strings.Index(haystack, needle)
+	if byteIdx < 0 {
+		return vm.IntVal(-1), nil
+	}
+	cpIdx := utf8.RuneCountInString(haystack[:byteIdx])
+	return vm.IntVal(int64(cpIdx)), nil
+}
+
+// StringRepeat repeats a string n times.
+func StringRepeat(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("string_repeat: expected 2 args, got %d", len(args))
+	}
+	s, err := resolveString(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_repeat: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("string_repeat: second argument must be Int")
+	}
+	n := int(args[1].AsInt())
+	if n < 0 {
+		return vm.UnitVal(), fmt.Errorf("string_repeat: count must be non-negative, got %d", n)
+	}
+	result := strings.Repeat(s, n)
+	idx := heap.AllocString(result)
+	return vm.ObjVal(idx), nil
+}
+
 // StringSplit splits a string by a separator, returning an array of strings.
 func StringSplit(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	if len(args) != 2 {
@@ -125,6 +168,24 @@ func StringChars(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	return vm.ObjVal(idx), nil
 }
 
+// StringBytes returns the UTF-8 bytes of a string as an array of Int values.
+func StringBytes(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("string_bytes: expected 1 arg, got %d", len(args))
+	}
+	s, err := resolveString(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_bytes: %w", err)
+	}
+	bytes := []byte(s)
+	elems := make([]vm.Value, len(bytes))
+	for i, b := range bytes {
+		elems[i] = vm.IntVal(int64(b))
+	}
+	idx := heap.AllocArray(elems)
+	return vm.ObjVal(idx), nil
+}
+
 // CharToString converts a Char value to a single-character String.
 func CharToString(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	if len(args) != 1 {
@@ -156,6 +217,60 @@ func StringReplace(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 		return vm.UnitVal(), fmt.Errorf("string_replace: %w", err)
 	}
 	result := strings.ReplaceAll(s, old, newStr)
+	idx := heap.AllocString(result)
+	return vm.ObjVal(idx), nil
+}
+
+// StringPadLeft pads a string on the left with a Char until it reaches the target width.
+func StringPadLeft(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 3 {
+		return vm.UnitVal(), fmt.Errorf("string_pad_left: expected 3 args, got %d", len(args))
+	}
+	s, err := resolveString(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_pad_left: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("string_pad_left: width must be Int")
+	}
+	if args[2].Tag != vm.TagChar {
+		return vm.UnitVal(), fmt.Errorf("string_pad_left: pad_char must be Char")
+	}
+	width := int(args[1].AsInt())
+	padChar := args[2].AsChar()
+	runeLen := utf8.RuneCountInString(s)
+	if runeLen >= width {
+		return args[0], nil
+	}
+	padding := strings.Repeat(string(padChar), width-runeLen)
+	result := padding + s
+	idx := heap.AllocString(result)
+	return vm.ObjVal(idx), nil
+}
+
+// StringPadRight pads a string on the right with a Char until it reaches the target width.
+func StringPadRight(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 3 {
+		return vm.UnitVal(), fmt.Errorf("string_pad_right: expected 3 args, got %d", len(args))
+	}
+	s, err := resolveString(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("string_pad_right: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("string_pad_right: width must be Int")
+	}
+	if args[2].Tag != vm.TagChar {
+		return vm.UnitVal(), fmt.Errorf("string_pad_right: pad_char must be Char")
+	}
+	width := int(args[1].AsInt())
+	padChar := args[2].AsChar()
+	runeLen := utf8.RuneCountInString(s)
+	if runeLen >= width {
+		return args[0], nil
+	}
+	padding := strings.Repeat(string(padChar), width-runeLen)
+	result := s + padding
 	idx := heap.AllocString(result)
 	return vm.ObjVal(idx), nil
 }
@@ -216,4 +331,9 @@ func StringToLower(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	}
 	idx := heap.AllocString(strings.ToLower(s))
 	return vm.ObjVal(idx), nil
+}
+
+// StringJoin joins an array of strings with a separator.
+func StringJoin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	return ArrayJoin(args, heap)
 }

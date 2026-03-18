@@ -1,5 +1,27 @@
-# Task: MIR construction in SSA form with CFG and optimization passes
+# Task: Array stdlib expansion
 
-Implement pkg/mir/mir.go: MIR types (MIRFunction, BasicBlock, BlockID, MIRStmt interface variants for Assign/Call/BinaryOp/UnaryOp/FieldAccess/IndexAccess/ArrayAlloc/StructAlloc/EnumAlloc/ClosureAlloc/ChannelCreate/ChannelSend/Spawn, Terminator interface variants for Goto/Branch/Switch/Return/Unreachable, MIRLocal/MIRConst/MIRGlobal values). Implement pkg/mir/builder.go: HIR-to-MIR SSA construction with phi node placement at join points. Implement pkg/mir/printer.go: MIR pretty-printer. Write mir_test.go for SSA correctness, CFG structure, phi node placement. Then implement all 11 optimization passes in pkg/optimize/: pipeline.go (pass runner), constant_fold.go, dead_code.go, copy_prop.go, cse.go, inline.go (≤8 stmts, not recursive), const_prop.go, licm.go, tco.go (self-tail-recursion to loop), escape.go (stack vs heap decision), block_merge.go. Write optimize_test.go verifying each pass individually and the combined pipeline preserves semantics. Create golden test data in tests/testdata/optimize/.
+Add 12 new array functions to pkg/stdlib/array_ops.go.
 
-Target files: pkg/mir/mir.go, pkg/mir/builder.go, pkg/mir/printer.go, pkg/mir/mir_test.go, pkg/optimize/pipeline.go, pkg/optimize/constant_fold.go, pkg/optimize/dead_code.go, pkg/optimize/copy_prop.go, pkg/optimize/cse.go, pkg/optimize/inline.go, pkg/optimize/const_prop.go, pkg/optimize/licm.go, pkg/optimize/tco.go, pkg/optimize/escape.go, pkg/optimize/block_merge.go, pkg/optimize/optimize_test.go, tests/testdata/optimize/constant_fold.mir, tests/testdata/optimize/dead_code.mir, tests/testdata/optimize/inline.mir, tests/testdata/optimize/tco.mir, tests/testdata/optimize/escape.mir, tests/integration/optimize_golden_test.go
+Functions using CallbackInvoker (higher-order):
+- ArrayFind: 2 args (array, predicate), returns makeResultOk(first match) or makeResultErr("not found")
+- ArrayAny: 2 args, returns BoolVal(true) on first truthy predicate result, false for empty
+- ArrayAll: 2 args, returns BoolVal(false) on first non-truthy, true for empty
+
+Numeric aggregation (1-arg, check all elements are Int or Float):
+- ArraySum: returns Int if all Int, Float if any Float, IntVal(0) for empty
+- ArrayMin: returns minimum via compareValues, errors on empty
+- ArrayMax: returns maximum via compareValues, errors on empty
+
+Slicing/chunking:
+- ArrayTake: 2 args (array, n:Int), returns first min(n, len) elements, empty for n<=0
+- ArrayDrop: 2 args, removes first n elements
+- ArraySlice: 3 args (array, start:Int, end:Int), supports negative indices, clamps to bounds
+- ArrayChunk: 2 args (array, size:Int), errors if size<=0, returns array of arrays
+
+Other:
+- ArrayUnique: 1 arg, O(n²) dedup using Value.Equal, preserves first occurrence order
+- ArrayJoin: 2 args (array of strings, separator string), uses resolveString on each element, returns joined string
+
+See goal spec section 6 for exact implementations.
+
+Target files: pkg/stdlib/array_ops.go

@@ -1,5 +1,17 @@
-# Task: Project scaffolding, diagnostics, and token definitions
+# Task: ObjMap core types and heap allocation
 
-Initialize Go module (go.mod), vex_config.toml with all documented defaults, and foundational packages. Implement pkg/diagnostic/ (source file registry, Span type, line/col mapping, error/warning formatting with source underlining and 'did you mean?' suggestions). Implement pkg/lexer/token.go with all 52 token types as an enum, Token struct with span/line/col/value, and keyword lookup table. Write diagnostic_test.go verifying formatting, span-to-line/col conversion, and multi-error accumulation.
+Add MapObj heap type to pkg/vm/value.go and AllocMap to pkg/vm/heap.go.
 
-Target files: go.mod, go.sum, vex_config.toml, pkg/diagnostic/diagnostic.go, pkg/diagnostic/source.go, pkg/diagnostic/diagnostic_test.go, pkg/lexer/token.go
+In value.go:
+1. Add ObjMap byte constant = 0x27 after ObjChannel = 0x26
+2. Add mapEntry struct with Key and Value fields (both vm.Value)
+3. Add MapObj struct with Buckets (map[uint64][]mapEntry) and Count (int)
+4. Add exported ComputeHash(v Value, heap *Heap) (uint64, error) function that uses fnv.New64a() + hashValue, rejecting ClosureObj and ChannelObj as unhashable
+5. Add MapObj methods: Get, Set, Delete, Contains, Keys, Values, Entries (see goal spec sections 1.2-1.4 for exact signatures and implementations)
+
+In heap.go:
+6. Add AllocMap() uint32 method that allocates a HeapObject with TypeID=ObjMap and Data=&MapObj{Buckets: make(map[uint64][]mapEntry), Count: 0}
+
+Note: Must import "hash/fnv" in value.go. The mapEntry type and MapObj must be exported so stdlib/map_ops.go can reference them.
+
+Target files: pkg/vm/value.go, pkg/vm/heap.go

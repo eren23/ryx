@@ -3,6 +3,7 @@ package stdlib
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/ryx-lang/ryx/pkg/vm"
 )
@@ -285,6 +286,339 @@ func ArrayFlatMap(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 		results = []vm.Value{}
 	}
 	idx := heap.AllocArray(results)
+	return vm.ObjVal(idx), nil
+}
+
+// ArrayFind returns the first element matching the predicate, wrapped in Result.
+func ArrayFind(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_find: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_find: %w", err)
+	}
+	fn := args[1]
+	if CallbackInvoker == nil {
+		return vm.UnitVal(), fmt.Errorf("array_find: no callback invoker registered")
+	}
+	for _, elem := range a.Elements {
+		result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)
+		if callErr != nil {
+			return vm.UnitVal(), fmt.Errorf("array_find: callback error: %w", callErr)
+		}
+		if result.IsTruthy() {
+			return makeResultOk(elem, heap), nil
+		}
+	}
+	return makeResultErr("not found", heap), nil
+}
+
+// ArrayAny returns true if any element satisfies the predicate.
+func ArrayAny(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_any: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_any: %w", err)
+	}
+	fn := args[1]
+	if CallbackInvoker == nil {
+		return vm.UnitVal(), fmt.Errorf("array_any: no callback invoker registered")
+	}
+	for _, elem := range a.Elements {
+		result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)
+		if callErr != nil {
+			return vm.UnitVal(), fmt.Errorf("array_any: callback error: %w", callErr)
+		}
+		if result.IsTruthy() {
+			return vm.BoolVal(true), nil
+		}
+	}
+	return vm.BoolVal(false), nil
+}
+
+// ArrayAll returns true if all elements satisfy the predicate.
+func ArrayAll(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_all: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_all: %w", err)
+	}
+	fn := args[1]
+	if CallbackInvoker == nil {
+		return vm.UnitVal(), fmt.Errorf("array_all: no callback invoker registered")
+	}
+	for _, elem := range a.Elements {
+		result, callErr := CallbackInvoker(fn, []vm.Value{elem}, heap)
+		if callErr != nil {
+			return vm.UnitVal(), fmt.Errorf("array_all: callback error: %w", callErr)
+		}
+		if !result.IsTruthy() {
+			return vm.BoolVal(false), nil
+		}
+	}
+	return vm.BoolVal(true), nil
+}
+
+// ArraySum returns the sum of all numeric elements.
+func ArraySum(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("array_sum: expected 1 arg, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_sum: %w", err)
+	}
+	if len(a.Elements) == 0 {
+		return vm.IntVal(0), nil
+	}
+	hasFloat := false
+	for _, e := range a.Elements {
+		if e.Tag == vm.TagFloat {
+			hasFloat = true
+		} else if e.Tag != vm.TagInt {
+			return vm.UnitVal(), fmt.Errorf("array_sum: non-numeric element with tag=%d", e.Tag)
+		}
+	}
+	if hasFloat {
+		sum := 0.0
+		for _, e := range a.Elements {
+			sum += toFloat(e)
+		}
+		return vm.FloatVal(sum), nil
+	}
+	var sum int64
+	for _, e := range a.Elements {
+		sum += e.AsInt()
+	}
+	return vm.IntVal(sum), nil
+}
+
+// ArrayMin returns the minimum element of a non-empty array.
+func ArrayMin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("array_min: expected 1 arg, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_min: %w", err)
+	}
+	if len(a.Elements) == 0 {
+		return vm.UnitVal(), fmt.Errorf("array_min: array is empty")
+	}
+	minVal := a.Elements[0]
+	for _, e := range a.Elements[1:] {
+		if compareValues(e, minVal, heap) < 0 {
+			minVal = e
+		}
+	}
+	return minVal, nil
+}
+
+// ArrayMax returns the maximum element of a non-empty array.
+func ArrayMax(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("array_max: expected 1 arg, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_max: %w", err)
+	}
+	if len(a.Elements) == 0 {
+		return vm.UnitVal(), fmt.Errorf("array_max: array is empty")
+	}
+	maxVal := a.Elements[0]
+	for _, e := range a.Elements[1:] {
+		if compareValues(e, maxVal, heap) > 0 {
+			maxVal = e
+		}
+	}
+	return maxVal, nil
+}
+
+// ArrayTake returns the first n elements of an array.
+func ArrayTake(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_take: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_take: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("array_take: second argument must be Int")
+	}
+	n := int(args[1].AsInt())
+	if n <= 0 {
+		idx := heap.AllocArray([]vm.Value{})
+		return vm.ObjVal(idx), nil
+	}
+	if n > len(a.Elements) {
+		n = len(a.Elements)
+	}
+	taken := make([]vm.Value, n)
+	copy(taken, a.Elements[:n])
+	idx := heap.AllocArray(taken)
+	return vm.ObjVal(idx), nil
+}
+
+// ArrayDrop removes the first n elements from an array.
+func ArrayDrop(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_drop: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_drop: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("array_drop: second argument must be Int")
+	}
+	n := int(args[1].AsInt())
+	if n <= 0 {
+		n = 0
+	}
+	if n >= len(a.Elements) {
+		idx := heap.AllocArray([]vm.Value{})
+		return vm.ObjVal(idx), nil
+	}
+	dropped := make([]vm.Value, len(a.Elements)-n)
+	copy(dropped, a.Elements[n:])
+	idx := heap.AllocArray(dropped)
+	return vm.ObjVal(idx), nil
+}
+
+// ArraySlice returns a sub-array from start (inclusive) to end (exclusive).
+// Supports negative indices and clamps to bounds.
+func ArraySlice(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 3 {
+		return vm.UnitVal(), fmt.Errorf("array_slice: expected 3 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_slice: %w", err)
+	}
+	if args[1].Tag != vm.TagInt || args[2].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("array_slice: indices must be Int")
+	}
+	n := len(a.Elements)
+	start := int(args[1].AsInt())
+	end := int(args[2].AsInt())
+
+	// Negative index handling
+	if start < 0 {
+		start = n + start
+	}
+	if end < 0 {
+		end = n + end
+	}
+
+	// Clamp
+	if start < 0 {
+		start = 0
+	}
+	if end > n {
+		end = n
+	}
+	if start >= end {
+		idx := heap.AllocArray([]vm.Value{})
+		return vm.ObjVal(idx), nil
+	}
+
+	sliced := make([]vm.Value, end-start)
+	copy(sliced, a.Elements[start:end])
+	idx := heap.AllocArray(sliced)
+	return vm.ObjVal(idx), nil
+}
+
+// ArrayChunk splits an array into chunks of the given size.
+func ArrayChunk(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_chunk: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_chunk: %w", err)
+	}
+	if args[1].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("array_chunk: second argument must be Int")
+	}
+	size := int(args[1].AsInt())
+	if size <= 0 {
+		return vm.UnitVal(), fmt.Errorf("array_chunk: chunk size must be positive, got %d", size)
+	}
+	if len(a.Elements) == 0 {
+		idx := heap.AllocArray([]vm.Value{})
+		return vm.ObjVal(idx), nil
+	}
+	var chunks []vm.Value
+	for i := 0; i < len(a.Elements); i += size {
+		end := i + size
+		if end > len(a.Elements) {
+			end = len(a.Elements)
+		}
+		chunk := make([]vm.Value, end-i)
+		copy(chunk, a.Elements[i:end])
+		chunkIdx := heap.AllocArray(chunk)
+		chunks = append(chunks, vm.ObjVal(chunkIdx))
+	}
+	idx := heap.AllocArray(chunks)
+	return vm.ObjVal(idx), nil
+}
+
+// ArrayUnique removes duplicates using O(n²) Value.Equal comparison.
+func ArrayUnique(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("array_unique: expected 1 arg, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_unique: %w", err)
+	}
+	var unique []vm.Value
+	for _, elem := range a.Elements {
+		found := false
+		for _, u := range unique {
+			if elem.Equal(u, heap) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			unique = append(unique, elem)
+		}
+	}
+	idx := heap.AllocArray(unique)
+	return vm.ObjVal(idx), nil
+}
+
+// ArrayJoin joins an array of strings with a separator.
+func ArrayJoin(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 2 {
+		return vm.UnitVal(), fmt.Errorf("array_join: expected 2 args, got %d", len(args))
+	}
+	a, err := resolveArray(args[0], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_join: %w", err)
+	}
+	sep, err := resolveString(args[1], heap)
+	if err != nil {
+		return vm.UnitVal(), fmt.Errorf("array_join: separator: %w", err)
+	}
+	parts := make([]string, len(a.Elements))
+	for i, elem := range a.Elements {
+		s, err := resolveString(elem, heap)
+		if err != nil {
+			return vm.UnitVal(), fmt.Errorf("array_join: element %d: %w", i, err)
+		}
+		parts[i] = s
+	}
+	result := strings.Join(parts, sep)
+	idx := heap.AllocString(result)
 	return vm.ObjVal(idx), nil
 }
 

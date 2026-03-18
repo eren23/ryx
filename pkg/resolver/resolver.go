@@ -111,7 +111,8 @@ var builtinFunctions = []string{
 	"array_sort", "array_flatten",
 	// Math
 	"abs", "min", "max", "sqrt", "pow", "floor", "ceil", "round",
-	"sin", "cos", "tan", "log", "log2", "log10",
+	"sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+	"log", "log2", "log10", "exp", "pi", "e", "gcd", "lcm", "clamp",
 	// Hash / comparison (trait methods)
 	"eq", "neq", "compare", "to_string", "clone", "hash",
 }
