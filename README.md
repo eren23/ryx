@@ -42,6 +42,9 @@ Start the REPL:
 
 The mdBook content is split into focused chapters instead of keeping the full manual in the root README.
 
+GitHub Pages deployment is defined in `.github/workflows/pages.yml` and publishes `docs/book/`.
+In the repository settings, `Pages` should use `GitHub Actions` as the source.
+
 Common local docs commands:
 
 ```bash

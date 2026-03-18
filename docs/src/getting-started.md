@@ -101,3 +101,8 @@ Build the static site:
 cd docs
 mdbook build
 ```
+
+GitHub publishing:
+
+- The repository workflow `.github/workflows/pages.yml` deploys `docs/book/`
+- In GitHub repository settings, `Pages` must be set to `GitHub Actions`
