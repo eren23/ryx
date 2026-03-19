@@ -17,6 +17,7 @@ import (
 	"github.com/ryx-lang/ryx/pkg/optimize"
 	"github.com/ryx-lang/ryx/pkg/parser"
 	"github.com/ryx-lang/ryx/pkg/resolver"
+	"github.com/ryx-lang/ryx/pkg/stdlib"
 	"github.com/ryx-lang/ryx/pkg/types"
 	"github.com/ryx-lang/ryx/pkg/vm"
 )
@@ -83,6 +84,11 @@ func compileAndRunWithTimeout(src, filename string, timeout time.Duration) (stdo
 	machine := vm.NewVM(compiled)
 	var buf bytes.Buffer
 	machine.Stdout = &buf
+
+	// Register stdlib builtins for OpCallBuiltin dispatch.
+	reg := vm.NewBuiltinRegistry()
+	stdlib.RegisterAll(reg)
+	machine.Builtins = reg
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

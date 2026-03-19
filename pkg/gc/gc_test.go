@@ -818,6 +818,171 @@ func TestWriteBarrierBulkChildren(t *testing.T) {
 // 20. Emergency GC
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 20. Map values survive GC when reachable
+// ---------------------------------------------------------------------------
+
+func TestMapValuesReachable(t *testing.T) {
+	h := NewHeap()
+
+	// Create a map object with string values stored as children.
+	mapObj := makeObj(h, KindMap, 128)
+
+	// Simulate map entries: keys and values are heap strings.
+	key1 := makeObj(h, KindString, 32)
+	val1 := makeObj(h, KindString, 64)
+	key2 := makeObj(h, KindString, 32)
+	val2 := makeObj(h, KindString, 64)
+	mapObj.Children = []*Object{key1, val1, key2, val2}
+
+	// Map is reachable from a root.
+	h.AddRootProvider(func() []*Object { return []*Object{mapObj} })
+
+	// Also allocate unreferenced garbage.
+	garbage1 := makeObj(h, KindString, 16)
+	garbage2 := makeObj(h, KindString, 16)
+
+	h.FullGC()
+
+	// Map and all its keys/values must survive.
+	if !h.IsLive(mapObj) {
+		t.Fatal("map should be live")
+	}
+	if !h.IsLive(key1) {
+		t.Fatal("key1 should be live (referenced by map)")
+	}
+	if !h.IsLive(val1) {
+		t.Fatal("val1 should be live (referenced by map)")
+	}
+	if !h.IsLive(key2) {
+		t.Fatal("key2 should be live (referenced by map)")
+	}
+	if !h.IsLive(val2) {
+		t.Fatal("val2 should be live (referenced by map)")
+	}
+
+	// Garbage should be collected.
+	if h.IsLive(garbage1) {
+		t.Fatal("garbage1 should be collected")
+	}
+	if h.IsLive(garbage2) {
+		t.Fatal("garbage2 should be collected")
+	}
+	if h.Stats.LastFreed != 2 {
+		t.Fatalf("expected 2 garbage freed, got %d", h.Stats.LastFreed)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 21. Unreferenced map is collected
+// ---------------------------------------------------------------------------
+
+func TestUnreferencedMapCollected(t *testing.T) {
+	h := NewHeap()
+
+	// Create a map with children, but no root references it.
+	mapObj := makeObj(h, KindMap, 128)
+	key := makeObj(h, KindString, 32)
+	val := makeObj(h, KindString, 64)
+	mapObj.Children = []*Object{key, val}
+
+	// No root provider — entire map subgraph is garbage.
+	freed := collectAll(h)
+	if freed != 3 {
+		t.Fatalf("expected 3 freed (map + key + val), got %d", freed)
+	}
+	if h.LiveObjects() != 0 {
+		t.Fatalf("expected 0 live objects, got %d", h.LiveObjects())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 22. Map write barrier (BarrierMapSet)
+// ---------------------------------------------------------------------------
+
+func TestBarrierMapSet(t *testing.T) {
+	h := NewHeap()
+
+	mapObj := makeObj(h, KindMap, 128)
+	h.mu.Lock()
+	h.phase = PhaseMark
+	mapObj.Color = Black
+	h.mu.Unlock()
+
+	// Simulate inserting a new key-value pair where both are White heap objects.
+	newKey := &Object{Kind: KindString, Color: White, Size: 16}
+	newVal := &Object{Kind: KindString, Color: White, Size: 32}
+	h.mu.Lock()
+	h.Objects = append(h.Objects, newKey, newVal)
+	h.mu.Unlock()
+
+	mapObj.Children = append(mapObj.Children, newKey, newVal)
+	h.BarrierMapSet(mapObj, newKey, newVal)
+
+	// Map should be re-grayed so the tracer will discover the new entries.
+	h.mu.Lock()
+	if mapObj.Color != Gray {
+		t.Fatalf("expected map to be Gray after BarrierMapSet, got %v", mapObj.Color)
+	}
+	found := false
+	for _, obj := range h.grayList {
+		if obj == mapObj {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected map in gray list after BarrierMapSet")
+	}
+	h.mu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// 23. Map values survive incremental GC
+// ---------------------------------------------------------------------------
+
+func TestMapValuesIncrementalGC(t *testing.T) {
+	h := NewHeap()
+	h.Threshold = 0 // Force GC to trigger immediately.
+
+	// Build: root struct → map → string values
+	mapObj := makeObj(h, KindMap, 128)
+	val1 := makeObj(h, KindString, 64)
+	val2 := makeObj(h, KindString, 64)
+	val3 := makeObj(h, KindString, 64)
+	mapObj.Children = []*Object{val1, val2, val3}
+
+	root := makeObj(h, KindStruct, 32, mapObj)
+	h.AddRootProvider(func() []*Object { return []*Object{root} })
+
+	// Add garbage.
+	makeObj(h, KindString, 16)
+	makeObj(h, KindString, 16)
+
+	// Run incremental GC to completion.
+	h.RunIncrementalUntilDone(1000)
+
+	if !h.IsLive(root) {
+		t.Fatal("root should be live")
+	}
+	if !h.IsLive(mapObj) {
+		t.Fatal("map should be live")
+	}
+	if !h.IsLive(val1) {
+		t.Fatal("val1 should survive incremental GC")
+	}
+	if !h.IsLive(val2) {
+		t.Fatal("val2 should survive incremental GC")
+	}
+	if !h.IsLive(val3) {
+		t.Fatal("val3 should survive incremental GC")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 24. Emergency GC (renumbered from 20)
+// ---------------------------------------------------------------------------
+
 func TestEmergencyGC(t *testing.T) {
 	h := NewHeap()
 	h.Threshold = 100 // Low threshold.

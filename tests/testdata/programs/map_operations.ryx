@@ -1,0 +1,84 @@
+// Comprehensive map operations: create, set, get, contains, len, delete, keys, values, entries, merge
+
+type Result {
+    Ok(Int),
+    Err(String),
+}
+
+fn unwrap(r: Result) -> Int {
+    match r {
+        Ok(v) => v,
+        Err(_) => -1,
+    }
+}
+
+fn main() {
+    // --- Create and populate ---
+    let m = map_new();
+    map_set(m, 1, 10);
+    map_set(m, 2, 20);
+    map_set(m, 3, 30);
+    map_set(m, 4, 40);
+
+    // --- Get values with map_get ---
+    println(unwrap(map_get(m, 1)));
+    println(unwrap(map_get(m, 3)));
+    println(unwrap(map_get(m, 99)));
+
+    // --- Contains checks ---
+    println(map_contains(m, 2));
+    println(map_contains(m, 99));
+
+    // --- Length ---
+    println(map_len(m));
+
+    // --- Delete key 2 ---
+    map_delete(m, 2);
+    println(map_len(m));
+    println(map_contains(m, 2));
+
+    // --- Sorted keys ---
+    let keys = array_sort(map_keys(m));
+    let mut i = 0;
+    while i < array_len(keys) {
+        println(keys[i]);
+        i = i + 1;
+    };
+
+    // --- Sorted values ---
+    let vals = array_sort(map_values(m));
+    let mut j = 0;
+    while j < array_len(vals) {
+        println(vals[j]);
+        j = j + 1;
+    };
+
+    // --- Sorted entries ---
+    let entries = map_entries(m);
+    // Sort entries by key: extract keys, sort, then look up
+    let sorted_keys = array_sort(map_keys(m));
+    let mut k = 0;
+    while k < array_len(sorted_keys) {
+        let key = sorted_keys[k];
+        let val = unwrap(map_get(m, key));
+        println(int_to_string(key) ++ "=" ++ int_to_string(val));
+        k = k + 1;
+    };
+
+    // --- Merge two maps ---
+    let m2 = map_new();
+    map_set(m2, 3, 300);
+    map_set(m2, 5, 500);
+
+    let merged = map_merge(m, m2);
+    println(map_len(merged));
+
+    let mkeys = array_sort(map_keys(merged));
+    let mut n = 0;
+    while n < array_len(mkeys) {
+        let mk = mkeys[n];
+        let mv = unwrap(map_get(merged, mk));
+        println(int_to_string(mk) ++ "=" ++ int_to_string(mv));
+        n = n + 1;
+    }
+}

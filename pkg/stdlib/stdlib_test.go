@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ryx-lang/ryx/pkg/vm"
 )
@@ -364,12 +365,14 @@ func TestStringIndexOf(t *testing.T) {
 		needle   string
 		want     int64
 	}{
-		{"hello", "ll", 2},
-		{"hello", "", 0},
-		{"", "x", -1},
-		{"café", "é", 3},
-		{"日本語", "本", 1},
-		{"hello", "xyz", -1},
+		{"hello", "he", 0},       // at start
+		{"hello", "ll", 2},       // at middle
+		{"hello", "lo", 3},       // at end
+		{"hello", "xyz", -1},     // missing
+		{"hello", "", 0},         // empty needle
+		{"", "x", -1},            // empty haystack
+		{"café", "é", 3},         // Unicode
+		{"日本語", "本", 1},          // Unicode multibyte
 	}
 	for _, tc := range tests {
 		v, err := StringIndexOf([]vm.Value{allocStr(h, tc.haystack), allocStr(h, tc.needle)}, h)
@@ -398,6 +401,24 @@ func TestStringRepeat(t *testing.T) {
 	}
 	if getString(v, h) != "" {
 		t.Errorf("StringRepeat(\"ab\", 0) = %q, want empty", getString(v, h))
+	}
+
+	// Repeat 1 time.
+	v, err = StringRepeat([]vm.Value{allocStr(h, "xy"), vm.IntVal(1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "xy" {
+		t.Errorf("StringRepeat(\"xy\", 1) = %q, want %q", getString(v, h), "xy")
+	}
+
+	// Empty string repeated.
+	v, err = StringRepeat([]vm.Value{allocStr(h, ""), vm.IntVal(5)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "" {
+		t.Errorf("StringRepeat(\"\", 5) = %q, want empty", getString(v, h))
 	}
 
 	if _, err := StringRepeat([]vm.Value{allocStr(h, "ab"), vm.IntVal(-1)}, h); err == nil {
@@ -475,19 +496,47 @@ func TestStringChars(t *testing.T) {
 
 func TestStringBytes(t *testing.T) {
 	h := newHeap()
-	v, err := StringBytes([]vm.Value{allocStr(h, "Aé")}, h)
+
+	// ASCII string.
+	v, err := StringBytes([]vm.Value{allocStr(h, "ABC")}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
 	arr := getArray(v, h)
+	wantASCII := []int64{65, 66, 67}
+	if len(arr) != len(wantASCII) {
+		t.Fatalf("StringBytes(\"ABC\") length = %d, want %d", len(arr), len(wantASCII))
+	}
+	for i, expected := range wantASCII {
+		if arr[i].AsInt() != expected {
+			t.Errorf("StringBytes(\"ABC\")[%d] = %d, want %d", i, arr[i].AsInt(), expected)
+		}
+	}
+
+	// UTF-8 string (multibyte chars).
+	v, err = StringBytes([]vm.Value{allocStr(h, "Aé")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr = getArray(v, h)
 	want := []int64{65, 195, 169}
 	if len(arr) != len(want) {
-		t.Fatalf("StringBytes length = %d, want %d", len(arr), len(want))
+		t.Fatalf("StringBytes(\"Aé\") length = %d, want %d", len(arr), len(want))
 	}
 	for i, expected := range want {
 		if arr[i].AsInt() != expected {
-			t.Errorf("StringBytes[%d] = %d, want %d", i, arr[i].AsInt(), expected)
+			t.Errorf("StringBytes(\"Aé\")[%d] = %d, want %d", i, arr[i].AsInt(), expected)
 		}
+	}
+
+	// Empty string.
+	v, err = StringBytes([]vm.Value{allocStr(h, "")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr = getArray(v, h)
+	if len(arr) != 0 {
+		t.Errorf("StringBytes(\"\") length = %d, want 0", len(arr))
 	}
 }
 
@@ -611,6 +660,23 @@ func TestStringPadLeftRight(t *testing.T) {
 	}
 	if v != original {
 		t.Error("StringPadRight should return the original value when width is already satisfied")
+	}
+
+	// Pad with different char ('0' for zero-padding).
+	v, err = StringPadLeft([]vm.Value{allocStr(h, "42"), vm.IntVal(5), vm.CharVal('0')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "00042" {
+		t.Errorf("StringPadLeft(\"42\", 5, '0') = %q, want %q", getString(v, h), "00042")
+	}
+
+	v, err = StringPadRight([]vm.Value{allocStr(h, "42"), vm.IntVal(5), vm.CharVal(' ')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "42   " {
+		t.Errorf("StringPadRight(\"42\", 5, ' ') = %q, want %q", getString(v, h), "42   ")
 	}
 }
 
@@ -873,6 +939,360 @@ func TestArrayMapFilterFold(t *testing.T) {
 	elems = getArray(v, h)
 	if len(elems) != 0 {
 		t.Error("filter empty should return empty")
+	}
+}
+
+func TestArraySum(t *testing.T) {
+	h := newHeap()
+	// Sum of ints.
+	v, err := ArraySum([]vm.Value{allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagInt || v.AsInt() != 6 {
+		t.Errorf("sum([1,2,3]) = %d, want 6", v.AsInt())
+	}
+
+	// Sum of floats.
+	v, err = ArraySum([]vm.Value{allocArr(h, []vm.Value{vm.FloatVal(1.5), vm.FloatVal(2.5), vm.FloatVal(3.0)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagFloat || v.AsFloat() != 7.0 {
+		t.Errorf("sum([1.5,2.5,3.0]) = %v, want 7.0", v.AsFloat())
+	}
+
+	// Empty array.
+	v, err = ArraySum([]vm.Value{allocArr(h, []vm.Value{})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagInt || v.AsInt() != 0 {
+		t.Errorf("sum([]) = %v, want 0", v.AsInt())
+	}
+}
+
+func TestArrayMin(t *testing.T) {
+	h := newHeap()
+	// Min of ints.
+	v, err := ArrayMin([]vm.Value{allocArr(h, []vm.Value{vm.IntVal(3), vm.IntVal(1), vm.IntVal(2)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 1 {
+		t.Errorf("min([3,1,2]) = %d, want 1", v.AsInt())
+	}
+
+	// Min of floats.
+	v, err = ArrayMin([]vm.Value{allocArr(h, []vm.Value{vm.FloatVal(3.5), vm.FloatVal(1.2), vm.FloatVal(2.8)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsFloat() != 1.2 {
+		t.Errorf("min([3.5,1.2,2.8]) = %v, want 1.2", v.AsFloat())
+	}
+
+	// Empty array error.
+	_, err = ArrayMin([]vm.Value{allocArr(h, []vm.Value{})}, h)
+	if err == nil {
+		t.Error("expected error for empty array min")
+	}
+}
+
+func TestArrayMax(t *testing.T) {
+	h := newHeap()
+	// Max of ints.
+	v, err := ArrayMax([]vm.Value{allocArr(h, []vm.Value{vm.IntVal(3), vm.IntVal(1), vm.IntVal(2)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 3 {
+		t.Errorf("max([3,1,2]) = %d, want 3", v.AsInt())
+	}
+
+	// Max of floats.
+	v, err = ArrayMax([]vm.Value{allocArr(h, []vm.Value{vm.FloatVal(3.5), vm.FloatVal(1.2), vm.FloatVal(2.8)})}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsFloat() != 3.5 {
+		t.Errorf("max([3.5,1.2,2.8]) = %v, want 3.5", v.AsFloat())
+	}
+
+	// Empty array error.
+	_, err = ArrayMax([]vm.Value{allocArr(h, []vm.Value{})}, h)
+	if err == nil {
+		t.Error("expected error for empty array max")
+	}
+}
+
+func TestArrayTake(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4)})
+
+	// Take N from array.
+	v, err := ArrayTake([]vm.Value{arr, vm.IntVal(2)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 2 || elems[0].AsInt() != 1 || elems[1].AsInt() != 2 {
+		t.Errorf("take(2) = %v, want [1,2]", elems)
+	}
+
+	// Take more than length.
+	v, _ = ArrayTake([]vm.Value{arr, vm.IntVal(10)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 4 {
+		t.Errorf("take(10) length = %d, want 4", len(elems))
+	}
+
+	// Take 0.
+	v, _ = ArrayTake([]vm.Value{arr, vm.IntVal(0)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 0 {
+		t.Errorf("take(0) length = %d, want 0", len(elems))
+	}
+}
+
+func TestArrayDrop(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4)})
+
+	// Drop N from array.
+	v, err := ArrayDrop([]vm.Value{arr, vm.IntVal(2)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 2 || elems[0].AsInt() != 3 || elems[1].AsInt() != 4 {
+		t.Errorf("drop(2) = %v, want [3,4]", elems)
+	}
+
+	// Drop more than length.
+	v, _ = ArrayDrop([]vm.Value{arr, vm.IntVal(10)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 0 {
+		t.Errorf("drop(10) length = %d, want 0", len(elems))
+	}
+
+	// Drop 0.
+	v, _ = ArrayDrop([]vm.Value{arr, vm.IntVal(0)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 4 {
+		t.Errorf("drop(0) length = %d, want 4", len(elems))
+	}
+}
+
+func TestArrayChunk(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4), vm.IntVal(5)})
+
+	// Chunk into groups of 2.
+	v, err := ArrayChunk([]vm.Value{arr, vm.IntVal(2)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := getArray(v, h)
+	if len(chunks) != 3 {
+		t.Fatalf("chunk(2) produced %d chunks, want 3", len(chunks))
+	}
+	c0 := getArray(chunks[0], h)
+	if len(c0) != 2 || c0[0].AsInt() != 1 || c0[1].AsInt() != 2 {
+		t.Errorf("chunk[0] = %v, want [1,2]", c0)
+	}
+	// Last chunk may be smaller.
+	cLast := getArray(chunks[2], h)
+	if len(cLast) != 1 || cLast[0].AsInt() != 5 {
+		t.Errorf("chunk[2] = %v, want [5]", cLast)
+	}
+
+	// Chunk size >= array length.
+	v, _ = ArrayChunk([]vm.Value{arr, vm.IntVal(10)}, h)
+	chunks = getArray(v, h)
+	if len(chunks) != 1 {
+		t.Errorf("chunk(10) produced %d chunks, want 1", len(chunks))
+	}
+	c0 = getArray(chunks[0], h)
+	if len(c0) != 5 {
+		t.Errorf("chunk(10)[0] length = %d, want 5", len(c0))
+	}
+}
+
+func TestArrayUnique(t *testing.T) {
+	h := newHeap()
+	// Int array with duplicates.
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(2), vm.IntVal(3), vm.IntVal(1)})
+	v, err := ArrayUnique([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 3 {
+		t.Fatalf("unique int length = %d, want 3", len(elems))
+	}
+	if elems[0].AsInt() != 1 || elems[1].AsInt() != 2 || elems[2].AsInt() != 3 {
+		t.Errorf("unique ints = %v, want [1,2,3]", elems)
+	}
+
+	// String array with duplicates.
+	arr = allocArr(h, []vm.Value{allocStr(h, "a"), allocStr(h, "b"), allocStr(h, "a")})
+	v, _ = ArrayUnique([]vm.Value{arr}, h)
+	elems = getArray(v, h)
+	if len(elems) != 2 {
+		t.Fatalf("unique string length = %d, want 2", len(elems))
+	}
+	if getString(elems[0], h) != "a" || getString(elems[1], h) != "b" {
+		t.Errorf("unique strings = [%q, %q], want [a, b]", getString(elems[0], h), getString(elems[1], h))
+	}
+}
+
+func TestArrayJoin(t *testing.T) {
+	h := newHeap()
+	// Join string array with separator.
+	arr := allocArr(h, []vm.Value{allocStr(h, "a"), allocStr(h, "b"), allocStr(h, "c")})
+	v, err := ArrayJoin([]vm.Value{arr, allocStr(h, ", ")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "a, b, c" {
+		t.Errorf("join = %q, want %q", getString(v, h), "a, b, c")
+	}
+
+	// Empty array.
+	arr = allocArr(h, []vm.Value{})
+	v, _ = ArrayJoin([]vm.Value{arr, allocStr(h, ",")}, h)
+	if getString(v, h) != "" {
+		t.Errorf("join empty = %q, want empty", getString(v, h))
+	}
+
+	// Single element.
+	arr = allocArr(h, []vm.Value{allocStr(h, "only")})
+	v, _ = ArrayJoin([]vm.Value{arr, allocStr(h, ",")}, h)
+	if getString(v, h) != "only" {
+		t.Errorf("join single = %q, want %q", getString(v, h), "only")
+	}
+}
+
+func TestArraySlice(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(10), vm.IntVal(20), vm.IntVal(30), vm.IntVal(40), vm.IntVal(50)})
+
+	// Valid range.
+	v, err := ArraySlice([]vm.Value{arr, vm.IntVal(1), vm.IntVal(4)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 3 || elems[0].AsInt() != 20 || elems[2].AsInt() != 40 {
+		t.Errorf("slice(1,4) = %v, want [20,30,40]", elems)
+	}
+
+	// Out-of-bounds handling (clamped).
+	v, _ = ArraySlice([]vm.Value{arr, vm.IntVal(-10), vm.IntVal(100)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 5 {
+		t.Errorf("slice(-10,100) length = %d, want 5", len(elems))
+	}
+
+	// Empty result (start >= end).
+	v, _ = ArraySlice([]vm.Value{arr, vm.IntVal(3), vm.IntVal(3)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 0 {
+		t.Errorf("slice(3,3) length = %d, want 0", len(elems))
+	}
+}
+
+func TestArrayFindAnyAll(t *testing.T) {
+	h := newHeap()
+	oldInvoker := CallbackInvoker
+	defer func() { CallbackInvoker = oldInvoker }()
+
+	// Callback ops: 1 = is_even, 2 = is_positive, 3 = always_false
+	CallbackInvoker = func(fn vm.Value, args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+		op := int(fn.Data)
+		switch op {
+		case 1: // is_even
+			return vm.BoolVal(args[0].AsInt()%2 == 0), nil
+		case 2: // is_positive
+			return vm.BoolVal(args[0].AsInt() > 0), nil
+		case 3: // always_false
+			return vm.BoolVal(false), nil
+		}
+		return vm.UnitVal(), nil
+	}
+
+	isEvenFn := vm.Value{Tag: vm.TagFunc, Data: 1}
+	isPositiveFn := vm.Value{Tag: vm.TagFunc, Data: 2}
+	alwaysFalseFn := vm.Value{Tag: vm.TagFunc, Data: 3}
+
+	// --- ArrayFind ---
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(3), vm.IntVal(4), vm.IntVal(6)})
+
+	// Find returns first match.
+	result, err := ArrayFind([]vm.Value{arr, isEvenFn}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsResultOk(result, h) {
+		t.Fatal("find: expected Ok")
+	}
+	inner, _ := ResultUnwrap(result, h)
+	if inner.AsInt() != 4 {
+		t.Errorf("find(is_even) = %d, want 4 (first even)", inner.AsInt())
+	}
+
+	// Find with no match.
+	arr = allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(3), vm.IntVal(5)})
+	result, _ = ArrayFind([]vm.Value{arr, isEvenFn}, h)
+	if IsResultOk(result, h) {
+		t.Error("find: expected Err for no match")
+	}
+
+	// --- ArrayAny ---
+	arr = allocArr(h, []vm.Value{vm.IntVal(-1), vm.IntVal(0), vm.IntVal(3)})
+
+	// Any returns true if any element matches.
+	v, _ := ArrayAny([]vm.Value{arr, isPositiveFn}, h)
+	if !v.AsBool() {
+		t.Error("any(is_positive) should be true")
+	}
+
+	// Any returns false if none match.
+	arr = allocArr(h, []vm.Value{vm.IntVal(-1), vm.IntVal(-2)})
+	v, _ = ArrayAny([]vm.Value{arr, isPositiveFn}, h)
+	if v.AsBool() {
+		t.Error("any(is_positive) should be false when all negative")
+	}
+
+	// Any on empty array returns false.
+	arr = allocArr(h, []vm.Value{})
+	v, _ = ArrayAny([]vm.Value{arr, isPositiveFn}, h)
+	if v.AsBool() {
+		t.Error("any on empty should be false")
+	}
+
+	// --- ArrayAll ---
+	arr = allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3)})
+
+	// All returns true if all match.
+	v, _ = ArrayAll([]vm.Value{arr, isPositiveFn}, h)
+	if !v.AsBool() {
+		t.Error("all(is_positive) should be true")
+	}
+
+	// All returns false if any doesn't.
+	arr = allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(-2), vm.IntVal(3)})
+	v, _ = ArrayAll([]vm.Value{arr, isPositiveFn}, h)
+	if v.AsBool() {
+		t.Error("all(is_positive) should be false when one is negative")
+	}
+
+	// All on empty array returns true.
+	arr = allocArr(h, []vm.Value{})
+	v, _ = ArrayAll([]vm.Value{arr, alwaysFalseFn}, h)
+	if !v.AsBool() {
+		t.Error("all on empty should be true (vacuous truth)")
 	}
 }
 
@@ -1418,6 +1838,15 @@ func TestPathHelpers(t *testing.T) {
 	if got := getString(extension, h); got != ".gz" {
 		t.Errorf("PathExtension() = %q, want %q", got, ".gz")
 	}
+
+	// No extension.
+	extension, err = PathExtension([]vm.Value{allocStr(h, "Makefile")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(extension, h); got != "" {
+		t.Errorf("PathExtension(\"Makefile\") = %q, want empty", got)
+	}
 }
 
 func TestFileSize(t *testing.T) {
@@ -1657,6 +2086,7 @@ func TestRegisterAll(t *testing.T) {
 		// Core
 		"int_to_float", "float_to_int", "int_to_string", "float_to_string",
 		"parse_int", "parse_float",
+		"bool_to_string", "char_to_int", "int_to_char",
 		"print", "println", "read_line",
 		"assert", "assert_eq", "panic",
 		// String ops
@@ -1682,6 +2112,12 @@ func TestRegisterAll(t *testing.T) {
 		"read_file", "write_file",
 		"file_exists", "dir_list", "dir_create", "path_join",
 		"path_dirname", "path_basename", "path_extension", "file_size",
+		// Time/Random
+		"time_now_ms", "sleep_ms", "random_seed", "random_shuffle", "random_choice",
+		// Map ops
+		"map_new", "map_get", "map_set", "map_delete", "map_contains",
+		"map_len", "map_keys", "map_values", "map_entries",
+		"map_merge", "map_filter", "map_map",
 		// Trait methods
 		"eq", "neq", "compare", "to_string", "default", "clone", "hash",
 	}
@@ -1795,5 +2231,502 @@ func TestArgCountErrors(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s(nil) should return error", tc.name)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// time_ops.go — Time functions
+// ---------------------------------------------------------------------------
+
+func TestTimeNowMs(t *testing.T) {
+	h := newHeap()
+	before := time.Now().UnixMilli()
+	v, err := TimeNowMs(nil, h)
+	after := time.Now().UnixMilli()
+	if err != nil {
+		t.Fatalf("TimeNowMs: %v", err)
+	}
+	if v.Tag != vm.TagInt {
+		t.Fatalf("TimeNowMs: expected TagInt, got %d", v.Tag)
+	}
+	ms := v.AsInt()
+	if ms < before || ms > after {
+		t.Errorf("TimeNowMs = %d, want in [%d, %d]", ms, before, after)
+	}
+	// Wrong arg count.
+	if _, err := TimeNowMs([]vm.Value{vm.IntVal(1)}, h); err == nil {
+		t.Error("expected error for 1 arg")
+	}
+}
+
+func TestSleepMs(t *testing.T) {
+	h := newHeap()
+	start := time.Now()
+	_, err := SleepMs([]vm.Value{vm.IntVal(10)}, h)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("SleepMs(10): %v", err)
+	}
+	if elapsed < 10*time.Millisecond {
+		t.Errorf("SleepMs(10) elapsed %v, want >= 10ms", elapsed)
+	}
+	// Negative value.
+	if _, err := SleepMs([]vm.Value{vm.IntVal(-1)}, h); err == nil {
+		t.Error("expected error for negative ms")
+	}
+	// Wrong type.
+	if _, err := SleepMs([]vm.Value{vm.FloatVal(1.0)}, h); err == nil {
+		t.Error("expected error for Float arg")
+	}
+	// Wrong arg count.
+	if _, err := SleepMs(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// time_ops.go — Random functions
+// ---------------------------------------------------------------------------
+
+func TestRandomSeed(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(10), vm.IntVal(20), vm.IntVal(30), vm.IntVal(40), vm.IntVal(50)})
+
+	// Seed, then collect a sequence of choices.
+	RandomSeed([]vm.Value{vm.IntVal(42)}, h)
+	seq1 := make([]int64, 10)
+	for i := range seq1 {
+		v, err := RandomChoice([]vm.Value{arr}, h)
+		if err != nil {
+			t.Fatalf("RandomChoice: %v", err)
+		}
+		seq1[i] = v.AsInt()
+	}
+
+	// Re-seed with same value, verify identical sequence.
+	RandomSeed([]vm.Value{vm.IntVal(42)}, h)
+	for i := range seq1 {
+		v, _ := RandomChoice([]vm.Value{arr}, h)
+		if v.AsInt() != seq1[i] {
+			t.Errorf("determinism broken at index %d: got %d, want %d", i, v.AsInt(), seq1[i])
+		}
+	}
+
+	// Wrong arg count.
+	if _, err := RandomSeed(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+	// Wrong type.
+	if _, err := RandomSeed([]vm.Value{vm.FloatVal(1.0)}, h); err == nil {
+		t.Error("expected error for Float arg")
+	}
+}
+
+func TestRandomShuffle(t *testing.T) {
+	h := newHeap()
+	elems := []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4), vm.IntVal(5)}
+	arr := allocArr(h, elems)
+
+	v, err := RandomShuffle([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatalf("RandomShuffle: %v", err)
+	}
+	shuffled := getArray(v, h)
+	if len(shuffled) != len(elems) {
+		t.Fatalf("RandomShuffle: length %d, want %d", len(shuffled), len(elems))
+	}
+	// Verify same elements present (sort both and compare).
+	orig := make([]int64, len(elems))
+	got := make([]int64, len(shuffled))
+	for i := range elems {
+		orig[i] = elems[i].AsInt()
+		got[i] = shuffled[i].AsInt()
+	}
+	sort.Slice(orig, func(i, j int) bool { return orig[i] < orig[j] })
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	for i := range orig {
+		if orig[i] != got[i] {
+			t.Errorf("RandomShuffle: sorted element %d = %d, want %d", i, got[i], orig[i])
+		}
+	}
+
+	// Wrong arg count.
+	if _, err := RandomShuffle(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+func TestRandomChoice(t *testing.T) {
+	h := newHeap()
+	elems := []vm.Value{vm.IntVal(10), vm.IntVal(20), vm.IntVal(30)}
+	arr := allocArr(h, elems)
+
+	valid := map[int64]bool{10: true, 20: true, 30: true}
+	for i := 0; i < 20; i++ {
+		v, err := RandomChoice([]vm.Value{arr}, h)
+		if err != nil {
+			t.Fatalf("RandomChoice: %v", err)
+		}
+		if !valid[v.AsInt()] {
+			t.Errorf("RandomChoice returned %d, not in {10, 20, 30}", v.AsInt())
+		}
+	}
+
+	// Empty array.
+	emptyArr := allocArr(h, nil)
+	if _, err := RandomChoice([]vm.Value{emptyArr}, h); err == nil {
+		t.Error("expected error for empty array")
+	}
+	// Wrong arg count.
+	if _, err := RandomChoice(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// core.go — Conversion functions (bool_to_string, char_to_int, int_to_char)
+// ---------------------------------------------------------------------------
+
+func TestBoolToString(t *testing.T) {
+	h := newHeap()
+	tests := []struct {
+		in  bool
+		out string
+	}{
+		{true, "true"},
+		{false, "false"},
+	}
+	for _, tc := range tests {
+		v, err := BoolToString([]vm.Value{vm.BoolVal(tc.in)}, h)
+		if err != nil {
+			t.Fatalf("BoolToString(%v): %v", tc.in, err)
+		}
+		got := getString(v, h)
+		if got != tc.out {
+			t.Errorf("BoolToString(%v) = %q, want %q", tc.in, got, tc.out)
+		}
+	}
+	// Wrong type.
+	if _, err := BoolToString([]vm.Value{vm.IntVal(1)}, h); err == nil {
+		t.Error("expected error for Int arg")
+	}
+	// Wrong arg count.
+	if _, err := BoolToString(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+func TestCharToInt(t *testing.T) {
+	h := newHeap()
+	tests := []struct {
+		in  rune
+		out int64
+	}{
+		{'a', 97},
+		{'0', 48},
+		{'Z', 90},
+	}
+	for _, tc := range tests {
+		v, err := CharToInt([]vm.Value{vm.CharVal(tc.in)}, h)
+		if err != nil {
+			t.Fatalf("CharToInt(%c): %v", tc.in, err)
+		}
+		if v.Tag != vm.TagInt || v.AsInt() != tc.out {
+			t.Errorf("CharToInt(%c) = %d, want %d", tc.in, v.AsInt(), tc.out)
+		}
+	}
+	// Wrong type.
+	if _, err := CharToInt([]vm.Value{vm.IntVal(97)}, h); err == nil {
+		t.Error("expected error for Int arg")
+	}
+	// Wrong arg count.
+	if _, err := CharToInt(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+func TestIntToChar(t *testing.T) {
+	h := newHeap()
+	tests := []struct {
+		in  int64
+		out rune
+	}{
+		{97, 'a'},
+		{48, '0'},
+		{90, 'Z'},
+	}
+	for _, tc := range tests {
+		v, err := IntToChar([]vm.Value{vm.IntVal(tc.in)}, h)
+		if err != nil {
+			t.Fatalf("IntToChar(%d): %v", tc.in, err)
+		}
+		if v.Tag != vm.TagChar || v.AsChar() != tc.out {
+			t.Errorf("IntToChar(%d) = %c, want %c", tc.in, v.AsChar(), tc.out)
+		}
+	}
+	// Wrong type.
+	if _, err := IntToChar([]vm.Value{vm.FloatVal(97.0)}, h); err == nil {
+		t.Error("expected error for Float arg")
+	}
+	// Wrong arg count.
+	if _, err := IntToChar(nil, h); err == nil {
+		t.Error("expected error for 0 args")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional coverage: Unicode for CharToInt / IntToChar
+// ---------------------------------------------------------------------------
+
+func TestCharToIntUnicode(t *testing.T) {
+	h := newHeap()
+	// 'A' -> 65
+	v, err := CharToInt([]vm.Value{vm.CharVal('A')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 65 {
+		t.Errorf("CharToInt('A') = %d, want 65", v.AsInt())
+	}
+
+	// CJK character: U+65E5 = 26085
+	v, err = CharToInt([]vm.Value{vm.CharVal('\u65E5')}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 26085 {
+		t.Errorf("CharToInt('\\u65E5') = %d, want 26085", v.AsInt())
+	}
+}
+
+func TestIntToCharUnicode(t *testing.T) {
+	h := newHeap()
+	// 65 -> 'A'
+	v, err := IntToChar([]vm.Value{vm.IntVal(65)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsChar() != 'A' {
+		t.Errorf("IntToChar(65) = %c, want A", v.AsChar())
+	}
+
+	// 26085 -> U+65E5
+	v, err = IntToChar([]vm.Value{vm.IntVal(26085)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsChar() != '\u65E5' {
+		t.Errorf("IntToChar(26085) = %c, want \\u65E5", v.AsChar())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional coverage: Deterministic RandomShuffle after seed
+// ---------------------------------------------------------------------------
+
+func TestRandomShuffleDeterministic(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4), vm.IntVal(5)})
+
+	RandomSeed([]vm.Value{vm.IntVal(777)}, h)
+	s1, err := RandomShuffle([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	RandomSeed([]vm.Value{vm.IntVal(777)}, h)
+	s2, err := RandomShuffle([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e1 := getArray(s1, h)
+	e2 := getArray(s2, h)
+	for i := range e1 {
+		if e1[i].AsInt() != e2[i].AsInt() {
+			t.Errorf("deterministic shuffle mismatch at %d: %d vs %d", i, e1[i].AsInt(), e2[i].AsInt())
+		}
+	}
+}
+
+func TestRandomChoiceSingleElement(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(99)})
+	for i := 0; i < 10; i++ {
+		v, err := RandomChoice([]vm.Value{arr}, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.AsInt() != 99 {
+			t.Errorf("choice([99]) = %d, want 99", v.AsInt())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional array_ops.go edge case coverage
+// ---------------------------------------------------------------------------
+
+func TestArraySumNonNumericError(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.BoolVal(true)})
+	_, err := ArraySum([]vm.Value{arr}, h)
+	if err == nil {
+		t.Error("expected error for non-numeric element in sum")
+	}
+}
+
+func TestArrayChunkZeroSizeError(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2)})
+	_, err := ArrayChunk([]vm.Value{arr, vm.IntVal(0)}, h)
+	if err == nil {
+		t.Error("expected error for chunk size 0")
+	}
+	_, err = ArrayChunk([]vm.Value{arr, vm.IntVal(-1)}, h)
+	if err == nil {
+		t.Error("expected error for negative chunk size")
+	}
+}
+
+func TestArraySliceNegativeIndices(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(10), vm.IntVal(20), vm.IntVal(30), vm.IntVal(40), vm.IntVal(50)})
+
+	// Negative start: -2 means index 3.
+	v, err := ArraySlice([]vm.Value{arr, vm.IntVal(-2), vm.IntVal(5)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 2 || elems[0].AsInt() != 40 || elems[1].AsInt() != 50 {
+		t.Errorf("slice(-2,5) = %v, want [40,50]", elems)
+	}
+
+	// Negative end: -1 means index 4.
+	v, _ = ArraySlice([]vm.Value{arr, vm.IntVal(0), vm.IntVal(-1)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 4 {
+		t.Errorf("slice(0,-1) length = %d, want 4", len(elems))
+	}
+
+	// Both negative.
+	v, _ = ArraySlice([]vm.Value{arr, vm.IntVal(-3), vm.IntVal(-1)}, h)
+	elems = getArray(v, h)
+	if len(elems) != 2 || elems[0].AsInt() != 30 || elems[1].AsInt() != 40 {
+		t.Errorf("slice(-3,-1) = %v, want [30,40]", elems)
+	}
+}
+
+func TestArrayChunkEvenSplit(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3), vm.IntVal(4)})
+	v, err := ArrayChunk([]vm.Value{arr, vm.IntVal(2)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := getArray(v, h)
+	if len(chunks) != 2 {
+		t.Fatalf("chunk(2) on [1,2,3,4] = %d chunks, want 2", len(chunks))
+	}
+	c0 := getArray(chunks[0], h)
+	c1 := getArray(chunks[1], h)
+	if len(c0) != 2 || c0[0].AsInt() != 1 || c0[1].AsInt() != 2 {
+		t.Errorf("chunk[0] = %v, want [1,2]", c0)
+	}
+	if len(c1) != 2 || c1[0].AsInt() != 3 || c1[1].AsInt() != 4 {
+		t.Errorf("chunk[1] = %v, want [3,4]", c1)
+	}
+
+	// Empty array chunk.
+	empty := allocArr(h, []vm.Value{})
+	v, _ = ArrayChunk([]vm.Value{empty, vm.IntVal(3)}, h)
+	chunks = getArray(v, h)
+	if len(chunks) != 0 {
+		t.Errorf("chunk empty = %d chunks, want 0", len(chunks))
+	}
+}
+
+func TestArraySumMixedIntFloat(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.FloatVal(2.5), vm.IntVal(3)})
+	v, err := ArraySum([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Tag != vm.TagFloat {
+		t.Fatalf("mixed sum tag = %d, want Float", v.Tag)
+	}
+	if v.AsFloat() != 6.5 {
+		t.Errorf("mixed sum = %v, want 6.5", v.AsFloat())
+	}
+}
+
+func TestArrayMinMaxSingleElement(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(42)})
+
+	v, err := ArrayMin([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 42 {
+		t.Errorf("min([42]) = %d, want 42", v.AsInt())
+	}
+
+	v, err = ArrayMax([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AsInt() != 42 {
+		t.Errorf("max([42]) = %d, want 42", v.AsInt())
+	}
+}
+
+func TestArrayTakeDropNegative(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(1), vm.IntVal(2), vm.IntVal(3)})
+
+	// Take with negative n returns empty.
+	v, err := ArrayTake([]vm.Value{arr, vm.IntVal(-1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(getArray(v, h)) != 0 {
+		t.Error("take(-1) should return empty")
+	}
+
+	// Drop with negative n returns full array.
+	v, err = ArrayDrop([]vm.Value{arr, vm.IntVal(-1)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(getArray(v, h)) != 3 {
+		t.Errorf("drop(-1) length = %d, want 3", len(getArray(v, h)))
+	}
+}
+
+func TestArrayUniqueAllSame(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{vm.IntVal(7), vm.IntVal(7), vm.IntVal(7)})
+	v, err := ArrayUnique([]vm.Value{arr}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elems := getArray(v, h)
+	if len(elems) != 1 || elems[0].AsInt() != 7 {
+		t.Errorf("unique([7,7,7]) = %v, want [7]", elems)
+	}
+}
+
+func TestArrayJoinEmptySeparator(t *testing.T) {
+	h := newHeap()
+	arr := allocArr(h, []vm.Value{allocStr(h, "a"), allocStr(h, "b"), allocStr(h, "c")})
+	v, err := ArrayJoin([]vm.Value{arr, allocStr(h, "")}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getString(v, h) != "abc" {
+		t.Errorf("join with empty sep = %q, want %q", getString(v, h), "abc")
 	}
 }

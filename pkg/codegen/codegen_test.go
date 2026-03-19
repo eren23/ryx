@@ -743,9 +743,9 @@ func TestOpcodeLookup(t *testing.T) {
 func TestOpcodeCount(t *testing.T) {
 	// The spec header says "68 instructions" but the listing enumerates 76
 	// distinct opcodes (some lines list two, e.g. "SUB_INT, SUB_FLOAT").
-	// We implement all 76 from the spec listing.
-	if len(instrTable) != 76 {
-		t.Errorf("expected 76 opcodes, got %d", len(instrTable))
+	// We implement all 76 from the spec listing, plus OpCallBuiltin (77 total).
+	if len(instrTable) != 77 {
+		t.Errorf("expected 77 opcodes, got %d", len(instrTable))
 	}
 }
 

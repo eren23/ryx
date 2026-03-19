@@ -14,6 +14,7 @@ package gc
 //   - OpFieldSet      (FIELD_SET)      — setting a struct field
 //   - OpIndexSet      (INDEX_SET)      — setting an array/slice element
 //   - OpChannelSend   (CHANNEL_SEND)   — sending a value into a channel
+//   - OpMapSet        (MAP_SET)        — inserting/updating a map entry
 //
 // The barrier uses the "re-mark parent" (Dijkstra-style) strategy:
 //   If parent is Black and child is White → set parent to Gray and
@@ -77,6 +78,21 @@ func (h *Heap) BarrierIndexSet(arrayObj, elemValue *Object) {
 // A channel (parent) is receiving a new value (child) into its buffer.
 func (h *Heap) BarrierChannelSend(channelObj, sentValue *Object) {
 	h.WriteBarrier(channelObj, sentValue)
+}
+
+// BarrierMapSet is called by the VM when executing MAP_SET.
+// A map (parent) is having an entry inserted or updated. Both the key and
+// value may be heap references, so barriers are applied to each.
+func (h *Heap) BarrierMapSet(mapObj, key, value *Object) {
+	if mapObj == nil {
+		return
+	}
+	if key != nil {
+		h.WriteBarrier(mapObj, key)
+	}
+	if value != nil {
+		h.WriteBarrier(mapObj, value)
+	}
 }
 
 // ---------------------------------------------------------------------------

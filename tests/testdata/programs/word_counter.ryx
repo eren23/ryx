@@ -1,0 +1,42 @@
+// Word frequency counter using native map builtins
+
+type Result {
+    Ok(Int),
+    Err(String),
+}
+
+fn main() {
+    let words = ["apple", "banana", "apple", "cherry", "banana", "apple"];
+    let counts = map_new();
+
+    // Count occurrences using map_contains, map_get, map_set
+    let mut i = 0;
+    while i < array_len(words) {
+        let word = words[i];
+        if map_contains(counts, word) {
+            let cur = match map_get(counts, word) {
+                Ok(v) => v,
+                Err(_) => 0,
+            };
+            map_set(counts, word, cur + 1);
+        } else {
+            map_set(counts, word, 1);
+        };
+        i = i + 1;
+    };
+
+    // Get keys and sort alphabetically
+    let keys = array_sort(map_keys(counts));
+
+    // Print each word and its count
+    let mut j = 0;
+    while j < array_len(keys) {
+        let key = keys[j];
+        let count = match map_get(counts, key) {
+            Ok(v) => v,
+            Err(_) => 0,
+        };
+        println(key ++ ": " ++ int_to_string(count));
+        j = j + 1;
+    }
+}

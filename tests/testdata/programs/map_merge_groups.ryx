@@ -1,0 +1,80 @@
+// Group numbers by even/odd, then merge maps and verify results
+// Tests map_merge, map_len, map_keys, map_values, map_get
+
+type Result {
+    Ok(Int),
+    Err(String),
+}
+
+fn unwrap(r: Result) -> Int {
+    match r {
+        Ok(v) => v,
+        Err(_) => -1,
+    }
+}
+
+fn main() {
+    // Separate even and odd numbers into two maps
+    // Each maps number -> number * 10
+    let evens = map_new();
+    let odds = map_new();
+
+    let numbers = [3, 7, 2, 8, 5, 4, 1, 6, 9, 10];
+    let mut i = 0;
+    while i < array_len(numbers) {
+        let n = numbers[i];
+        let remainder = n % 2;
+        if remainder == 0 {
+            map_set(evens, n, n * 10);
+        } else {
+            map_set(odds, n, n * 10);
+        };
+        i = i + 1;
+    };
+
+    println(map_len(evens));
+    println(map_len(odds));
+
+    // Print sorted even keys
+    let even_keys = array_sort(map_keys(evens));
+    let mut j = 0;
+    while j < array_len(even_keys) {
+        if j > 0 {
+            print(" ");
+        };
+        print(int_to_string(even_keys[j]));
+        j = j + 1;
+    };
+    println("");
+
+    // Print sorted odd keys
+    let odd_keys = array_sort(map_keys(odds));
+    let mut k = 0;
+    while k < array_len(odd_keys) {
+        if k > 0 {
+            print(" ");
+        };
+        print(int_to_string(odd_keys[k]));
+        k = k + 1;
+    };
+    println("");
+
+    // Merge both maps (odds overwrites evens for shared keys, but none overlap here)
+    let merged = map_merge(evens, odds);
+    println(map_len(merged));
+
+    // Verify some specific values
+    println(unwrap(map_get(merged, 2)));
+    println(unwrap(map_get(merged, 7)));
+    println(unwrap(map_get(merged, 10)));
+
+    // Print all merged entries sorted by key
+    let all_keys = array_sort(map_keys(merged));
+    let mut m = 0;
+    while m < array_len(all_keys) {
+        let key = all_keys[m];
+        let val = unwrap(map_get(merged, key));
+        println(int_to_string(key) ++ "=" ++ int_to_string(val));
+        m = m + 1;
+    }
+}

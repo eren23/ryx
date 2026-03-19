@@ -1,0 +1,12 @@
+Entries: 4
+Alice: 555-1234
+Charlie: 555-9012
+Contains Bob: true
+Contains Eve: false
+Deleted Bob
+Contains Bob: false
+Size: 3
+Names:
+Alice
+Charlie
+Diana

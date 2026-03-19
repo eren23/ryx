@@ -1,4 +1,7 @@
-// Simple hash map simulation using arrays and modulo hashing
+// Array-based hash map simulation (does NOT use native map builtins).
+// Regression test for: array indexing, while loops, conditionals, modular arithmetic.
+// For native map builtin tests, see: map_operations.ryx, word_counter.ryx,
+//   phone_book.ryx, group_by.ryx
 
 fn hash(key: Int, size: Int) -> Int {
     let h = key % size;

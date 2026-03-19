@@ -1,0 +1,50 @@
+// Phone book simulation using native map builtins
+
+type StrResult {
+    Ok(String),
+    Err(String),
+}
+
+fn unwrap_str(r: StrResult) -> String {
+    match r {
+        Ok(v) => v,
+        Err(_) => "not found",
+    }
+}
+
+fn main() {
+    let book = map_new();
+
+    // Add entries
+    map_set(book, "Alice", "555-1234");
+    map_set(book, "Bob", "555-5678");
+    map_set(book, "Charlie", "555-9012");
+    map_set(book, "Diana", "555-3456");
+
+    println("Entries: " ++ int_to_string(map_len(book)));
+
+    // Lookup entries using map_get
+    println("Alice: " ++ unwrap_str(map_get(book, "Alice")));
+    println("Charlie: " ++ unwrap_str(map_get(book, "Charlie")));
+
+    // Check if a name exists
+    println("Contains Bob: " ++ bool_to_string(map_contains(book, "Bob")));
+    println("Contains Eve: " ++ bool_to_string(map_contains(book, "Eve")));
+
+    // Delete an entry
+    map_delete(book, "Bob");
+    println("Deleted Bob");
+    println("Contains Bob: " ++ bool_to_string(map_contains(book, "Bob")));
+
+    // Print final size
+    println("Size: " ++ int_to_string(map_len(book)));
+
+    // List all names sorted
+    println("Names:");
+    let sorted_names = array_sort(map_keys(book));
+    let mut k = 0;
+    while k < array_len(sorted_names) {
+        println(sorted_names[k]);
+        k = k + 1;
+    }
+}

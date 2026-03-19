@@ -288,20 +288,32 @@ func isBuiltinName(name string) bool {
 	switch name {
 	case "print", "println", "read_line",
 		"int_to_float", "float_to_int", "int_to_string", "float_to_string",
+		"parse_int", "parse_float", "bool_to_string",
 		"string_to_int", "string_to_float", "char_to_int", "int_to_char",
 		"string_len", "array_len",
-		"assert", "assert_eq",
-		"eq", "neq", "compare", "to_string", "clone", "hash",
+		"assert", "assert_eq", "panic",
+		"eq", "neq", "compare", "to_string", "default", "clone", "hash",
 		"abs", "min", "max", "sqrt", "pow", "floor", "ceil", "round",
 		"sin", "cos", "tan", "asin", "acos", "atan", "atan2",
 		"log", "log2", "log10", "exp", "pi", "e", "gcd", "lcm", "clamp",
+		"random_int", "random_float",
+		"time_now_ms", "sleep_ms", "random_seed", "random_shuffle", "random_choice",
 		"string_chars", "string_contains", "string_split", "string_trim",
 		"string_replace", "string_starts_with", "string_ends_with",
 		"string_to_upper", "string_to_lower", "string_repeat", "string_reverse",
-		"string_slice",
+		"string_slice", "string_index_of", "string_pad_left", "string_pad_right",
+		"string_bytes", "string_join", "char_to_string",
 		"array_push", "array_pop", "array_slice", "array_reverse",
 		"array_contains", "array_map", "array_filter", "array_fold",
-		"array_sort", "array_flatten":
+		"array_sort", "array_flatten", "array_zip", "array_enumerate",
+		"array_flat_map", "array_find", "array_any", "array_all",
+		"array_sum", "array_min", "array_max", "array_take", "array_drop",
+		"array_chunk", "array_unique", "array_join",
+		"read_file", "write_file", "file_exists", "dir_list", "dir_create",
+		"path_join", "path_dirname", "path_basename", "path_extension", "file_size",
+		"map_new", "map_get", "map_set", "map_delete", "map_contains",
+		"map_len", "map_keys", "map_values", "map_entries",
+		"map_merge", "map_filter", "map_map":
 		return true
 	}
 	return false

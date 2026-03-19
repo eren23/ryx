@@ -115,6 +115,7 @@ const (
 	OpFloatToString Opcode = 0xA5
 	OpStringLen     Opcode = 0xA6
 	OpArrayLen      Opcode = 0xA7
+	OpCallBuiltin   Opcode = 0xA8 // operands: u16 name_idx, u16 arg_count
 
 	// Debug
 	OpBreakpoint Opcode = 0xF0
@@ -246,6 +247,7 @@ var instrTable = map[Opcode]InstrInfo{
 	OpFloatToString: {"FLOAT_TO_STRING", OpNone},
 	OpStringLen:     {"STRING_LEN", OpNone},
 	OpArrayLen:      {"ARRAY_LEN", OpNone},
+	OpCallBuiltin:   {"CALL_BUILTIN", OpU16U16},
 
 	// Debug
 	OpBreakpoint: {"BREAKPOINT", OpNone},

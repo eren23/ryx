@@ -1,0 +1,50 @@
+// Group animals by type using map builtins
+// Demonstrates grouping with map_contains, map_get, map_set, map_keys
+
+type StrResult {
+    Ok(String),
+    Err(String),
+}
+
+fn unwrap_str(r: StrResult, default: String) -> String {
+    match r {
+        Ok(v) => v,
+        Err(_) => default,
+    }
+}
+
+fn main() {
+    // Animals and their categories (parallel arrays)
+    let animals = ["dog", "eagle", "cat", "salmon", "robin"];
+    let categories = ["mammal", "bird", "mammal", "fish", "bird"];
+
+    let groups = map_new();
+
+    // Group animals by category using comma-separated strings as values
+    let mut i = 0;
+    while i < array_len(animals) {
+        let animal = animals[i];
+        let category = categories[i];
+        let current = unwrap_str(map_get(groups, category), "");
+        if current == "" {
+            map_set(groups, category, animal);
+        };
+        if current != "" {
+            map_set(groups, category, current ++ "," ++ animal);
+        };
+        i = i + 1;
+    };
+
+    // Print groups sorted by category key
+    let sorted_cats = array_sort(map_keys(groups));
+    let mut j = 0;
+    while j < array_len(sorted_cats) {
+        let cat = sorted_cats[j];
+        let members_str = unwrap_str(map_get(groups, cat), "");
+        // Sort members within each group for deterministic output
+        let members = array_sort(string_split(members_str, ","));
+        let sorted_members = array_join(members, ", ");
+        println(cat ++ ": " ++ sorted_members);
+        j = j + 1;
+    }
+}

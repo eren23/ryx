@@ -92,6 +92,44 @@ func ParseFloat(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
 	return makeResultOk(vm.FloatVal(f), heap), nil
 }
 
+// BoolToString converts a Bool to its string representation ("true" or "false").
+func BoolToString(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("bool_to_string: expected 1 argument, got %d", len(args))
+	}
+	if args[0].Tag != vm.TagBool {
+		return vm.UnitVal(), fmt.Errorf("bool_to_string: expected Bool, got tag %d", args[0].Tag)
+	}
+	s := "false"
+	if args[0].AsBool() {
+		s = "true"
+	}
+	idx := heap.AllocString(s)
+	return vm.ObjVal(idx), nil
+}
+
+// CharToInt converts a Char to its Unicode codepoint (Int).
+func CharToInt(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("char_to_int: expected 1 argument, got %d", len(args))
+	}
+	if args[0].Tag != vm.TagChar {
+		return vm.UnitVal(), fmt.Errorf("char_to_int: expected Char, got tag %d", args[0].Tag)
+	}
+	return vm.IntVal(int64(args[0].AsChar())), nil
+}
+
+// IntToChar converts an Int (Unicode codepoint) to a Char.
+func IntToChar(args []vm.Value, heap *vm.Heap) (vm.Value, error) {
+	if len(args) != 1 {
+		return vm.UnitVal(), fmt.Errorf("int_to_char: expected 1 argument, got %d", len(args))
+	}
+	if args[0].Tag != vm.TagInt {
+		return vm.UnitVal(), fmt.Errorf("int_to_char: expected Int, got tag %d", args[0].Tag)
+	}
+	return vm.CharVal(rune(args[0].AsInt())), nil
+}
+
 // ---------------------------------------------------------------------------
 // I/O — print / println / read_line
 // ---------------------------------------------------------------------------
@@ -259,6 +297,9 @@ func RegisterAll(r *vm.BuiltinRegistry) {
 	r.Register("float_to_string", FloatToString)
 	r.Register("parse_int", ParseInt)
 	r.Register("parse_float", ParseFloat)
+	r.Register("bool_to_string", BoolToString)
+	r.Register("char_to_int", CharToInt)
+	r.Register("int_to_char", IntToChar)
 
 	// I/O (core.go)
 	r.Register("print", Print)
@@ -357,6 +398,27 @@ func RegisterAll(r *vm.BuiltinRegistry) {
 	r.Register("path_basename", PathBasename)
 	r.Register("path_extension", PathExtension)
 	r.Register("file_size", FileSize)
+
+	// Time/Random operations (time_ops.go)
+	r.Register("time_now_ms", TimeNowMs)
+	r.Register("sleep_ms", SleepMs)
+	r.Register("random_seed", RandomSeed)
+	r.Register("random_shuffle", RandomShuffle)
+	r.Register("random_choice", RandomChoice)
+
+	// Map operations (map_ops.go)
+	r.Register("map_new", MapNew)
+	r.Register("map_get", MapGet)
+	r.Register("map_set", MapSet)
+	r.Register("map_delete", MapDelete)
+	r.Register("map_contains", MapContains)
+	r.Register("map_len", MapLen)
+	r.Register("map_keys", MapKeys)
+	r.Register("map_values", MapValues)
+	r.Register("map_entries", MapEntries)
+	r.Register("map_merge", MapMerge)
+	r.Register("map_filter", MapFilter)
+	r.Register("map_map", MapMap)
 
 	// Built-in trait methods (vm/builtins.go)
 	vm.RegisterBuiltinTraits(r)

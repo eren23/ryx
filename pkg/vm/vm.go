@@ -22,6 +22,7 @@ type VM struct {
 	Heap      *Heap
 	Scheduler *Scheduler
 	Globals   []Value
+	Builtins  *BuiltinRegistry // stdlib builtins for OpCallBuiltin dispatch
 
 	Stdout io.Writer // default os.Stdout
 
@@ -978,6 +979,28 @@ func (vm *VM) execute(fiber *Fiber) error {
 				fiber.Push(IntVal(0))
 			}
 			frame.IP = ip + 1
+
+		case codegen.OpCallBuiltin:
+			nameIdx := readU16(code, ip+1)
+			argCount := int(readU16(code, ip+3))
+			frame.IP = ip + 5
+
+			if vm.Builtins == nil {
+				return &RuntimeError{
+					Message: "no builtin registry configured",
+					Line:    vm.lastLine, Col: vm.lastCol,
+				}
+			}
+			name := vm.Program.StringPool[nameIdx]
+			args := make([]Value, argCount)
+			for i := argCount - 1; i >= 0; i-- {
+				args[i] = fiber.Pop()
+			}
+			result, err := vm.Builtins.Call(name, args, vm.Heap)
+			if err != nil {
+				return err
+			}
+			fiber.Push(result)
 
 		// =================================================================
 		// Debug

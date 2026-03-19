@@ -34,6 +34,7 @@ const (
 	KindString                    // interned or dynamic string
 	KindUpvalue                   // open/closed upvalue cell
 	KindFiber                     // lightweight fiber/coroutine
+	KindMap                       // hash map with key-value entries
 )
 
 // Object is a single GC-managed heap allocation.
@@ -52,6 +53,7 @@ type Object struct {
 	//   Channel → Children = buffered values
 	//   Upvalue → Children[0] = closed-over value (if closed)
 	//   Fiber   → Children = stack slots + call frame refs + open upvalues
+	//   Map     → Children = keys and values that are heap object references
 	Children []*Object
 
 	// Upvalue-specific: whether this upvalue cell is open (on stack) or closed.

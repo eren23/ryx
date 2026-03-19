@@ -120,6 +120,55 @@ var builtinOpcodes = map[string]Opcode{
 	"String::concat":  OpConcatString, // [CLAUDE-FIX] String concat desugared from ++ operator
 }
 
+// callBuiltinNames lists builtin functions dispatched via OpCallBuiltin through
+// the VM's BuiltinRegistry, rather than having a dedicated opcode.
+var callBuiltinNames = map[string]bool{
+	// Type conversions
+	"parse_int": true, "parse_float": true,
+	"bool_to_string": true, "char_to_int": true, "int_to_char": true,
+	"string_to_int": true, "string_to_float": true,
+	// I/O
+	"read_line": true,
+	// Assertions
+	"assert": true, "assert_eq": true, "panic": true,
+	// String operations
+	"string_slice": true, "string_contains": true, "string_index_of": true,
+	"string_repeat": true, "string_pad_left": true, "string_pad_right": true,
+	"string_bytes": true, "string_join": true, "string_split": true,
+	"string_trim": true, "string_chars": true, "char_to_string": true,
+	"string_replace": true, "string_starts_with": true, "string_ends_with": true,
+	"string_to_upper": true, "string_to_lower": true,
+	// Array operations
+	"array_push": true, "array_pop": true, "array_map": true, "array_filter": true,
+	"array_fold": true, "array_sort": true, "array_reverse": true,
+	"array_contains": true, "array_zip": true, "array_enumerate": true,
+	"array_flat_map": true, "array_find": true, "array_any": true, "array_all": true,
+	"array_sum": true, "array_min": true, "array_max": true,
+	"array_take": true, "array_drop": true, "array_chunk": true,
+	"array_unique": true, "array_join": true, "array_slice": true,
+	// Math operations
+	"abs": true, "min": true, "max": true, "sqrt": true, "pow": true,
+	"floor": true, "ceil": true, "round": true,
+	"sin": true, "cos": true, "tan": true, "asin": true, "acos": true,
+	"atan": true, "atan2": true, "log": true, "log2": true, "log10": true,
+	"exp": true, "pi": true, "e": true, "gcd": true, "lcm": true, "clamp": true,
+	"random_int": true, "random_float": true,
+	// File I/O
+	"read_file": true, "write_file": true, "file_exists": true,
+	"dir_list": true, "dir_create": true, "path_join": true,
+	"path_dirname": true, "path_basename": true, "path_extension": true, "file_size": true,
+	// Time/Random
+	"time_now_ms": true, "sleep_ms": true,
+	"random_seed": true, "random_shuffle": true, "random_choice": true,
+	// Trait methods
+	"eq": true, "neq": true, "compare": true, "to_string": true,
+	"default": true, "clone": true, "hash": true,
+	// Map operations
+	"map_new": true, "map_get": true, "map_set": true, "map_delete": true,
+	"map_contains": true, "map_len": true, "map_keys": true, "map_values": true,
+	"map_entries": true, "map_merge": true, "map_filter": true, "map_map": true,
+}
+
 // Generate compiles a MIR program to bytecode.
 func Generate(prog *mir.Program) (*CompiledProgram, error) {
 	g := &generator{
@@ -355,6 +404,23 @@ func (g *generator) emitStmt(stmt mir.Stmt) error {
 				}
 				EmitOp(&g.code, op)
 				// All builtins consume args and push one result (VM ensures this).
+				g.adjustStack(-len(s.Args) + 1)
+				if s.Dest != mir.NoLocal {
+					g.emitStoreLocal(s.Dest)
+				}
+				break
+			}
+			// Check if this is a stdlib builtin dispatched via OpCallBuiltin.
+			// Only use OpCallBuiltin if the name is NOT a user-defined function
+			// (user functions shadow builtins).
+			_, isUserFunc := g.funcIndex[glob.Name]
+			if callBuiltinNames[glob.Name] && !isUserFunc {
+				for _, arg := range s.Args {
+					g.emitValue(arg)
+				}
+				nameIdx := g.internString(glob.Name)
+				EmitU16U16(&g.code, OpCallBuiltin, nameIdx, uint16(len(s.Args)))
+				// OpCallBuiltin consumes args and pushes one result.
 				g.adjustStack(-len(s.Args) + 1)
 				if s.Dest != mir.NoLocal {
 					g.emitStoreLocal(s.Dest)
