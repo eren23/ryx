@@ -1,1 +1,3 @@
-All 25 tests pass (including with `-race`). Here's what was 
+All tests pass cleanly:
+
+- **Unit tests** (`./pkg/...`): All

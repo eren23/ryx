@@ -54,3 +54,4 @@
 {"timestamp": 1773783932.6588411, "agent_id": "agent-task-9", "task_id": "task-9", "entry_type": "tool_call", "data": {"tool": "Bash", "input_summary": "{\"command\": \"head -50 /Users/eren/Documents/AI/attocodepy_swarmtester_11/vex_config.toml\", \"description\": \"Check project config\"}"}}
 {"timestamp": 1773783994.554677, "agent_id": "agent-task-9", "task_id": "task-9", "entry_type": "cost_delta", "data": {"cost_usd": 0.0, "tokens_used": 1019, "duration_s": 134.58771419525146, "files_modified": [], "error": ""}}
 {"timestamp": 1773862485.840735, "agent_id": "agent-task-9", "task_id": "task-9", "entry_type": "cost_delta", "data": {"cost_usd": 0.0, "tokens_used": 0, "duration_s": 164.26458096504211, "files_modified": [], "error": ""}}
+{"timestamp": 1773904993.774406, "agent_id": "agent-task-9", "task_id": "task-9", "entry_type": "cost_delta", "data": {"cost_usd": 0.0, "tokens_used": 593, "duration_s": 32.43840265274048, "files_modified": [], "error": ""}}

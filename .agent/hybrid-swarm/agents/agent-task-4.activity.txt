@@ -1,1 +1,1 @@
-Now let me look at how the MIR builder lowers decision trees
+All tests pass across the entire project. The recursive ADT 

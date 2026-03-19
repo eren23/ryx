@@ -1,1 +1,1 @@
-Bash {"command": "go test ./tests/... -v 2>&1
+All tests pass. The fixes for the VM stack underflow panics 

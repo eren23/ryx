@@ -354,21 +354,10 @@ func (g *generator) emitStmt(stmt mir.Stmt) error {
 					g.emitValue(arg)
 				}
 				EmitOp(&g.code, op)
-				if voidBuiltins[glob.Name] {
-					// Void builtins (print/println) consume args but push nothing.
-					g.adjustStack(-len(s.Args))
-					if s.Dest != mir.NoLocal {
-						// Push unit as the "result" so StoreLocal has something to pop.
-						EmitOp(&g.code, OpConstUnit)
-						g.adjustStack(1)
-						g.emitStoreLocal(s.Dest)
-					}
-				} else {
-					// Non-void builtins consume args and push one result.
-					g.adjustStack(-len(s.Args) + 1)
-					if s.Dest != mir.NoLocal {
-						g.emitStoreLocal(s.Dest)
-					}
+				// All builtins consume args and push one result (VM ensures this).
+				g.adjustStack(-len(s.Args) + 1)
+				if s.Dest != mir.NoLocal {
+					g.emitStoreLocal(s.Dest)
 				}
 				break
 			}

@@ -2810,3 +2810,28 @@
 {"event_type": "info", "timestamp": 1773870832.9936378, "task_id": "", "agent_id": "", "data": {}, "message": "Shutdown requested \u2014 stopping dispatch"}
 {"event_type": "warning", "timestamp": 1773870832.993741, "task_id": "", "agent_id": "", "data": {}, "message": "7 tasks still pending after execution: ['task-4', 'task-5', 'task-7', 'task-8', 'task-9', 'task-10', 'task-11']"}
 {"event_type": "complete", "timestamp": 1773870832.9937952, "task_id": "", "agent_id": "", "data": {"done": 4, "pending": 7}, "message": "Swarm shutdown: 4/11 tasks in 6851.6s"}
+{"event_type": "info", "timestamp": 1773904181.9089532, "task_id": "", "agent_id": "", "data": {}, "message": "Resumed: 4 tasks already done, rest reset to pending"}
+{"event_type": "info", "timestamp": 1773904181.912243, "task_id": "", "agent_id": "", "data": {}, "message": "Initializing AST service..."}
+{"event_type": "info", "timestamp": 1773904184.643878, "task_id": "", "agent_id": "", "data": {}, "message": "Resume: using persisted task graph; skipping code-intel bootstrap"}
+{"event_type": "info", "timestamp": 1773904184.646249, "task_id": "", "agent_id": "", "data": {}, "message": "Resumed existing plan: 4 done, 7 pending"}
+{"event_type": "info", "timestamp": 1773904184.666432, "task_id": "", "agent_id": "", "data": {}, "message": "Git safety: branch=attoswarm/09202efb, stash=yes"}
+{"event_type": "info", "timestamp": 1773904184.666534, "task_id": "", "agent_id": "", "data": {}, "message": "Batch 1: 4 tasks"}
+{"event_type": "decision", "timestamp": 1773904184.666682, "task_id": "", "agent_id": "", "data": {"timestamp": "2026-03-19T07:09:44.666672+00:00", "phase": "executing", "decision_type": "parallel_safety_split", "decision": "Serialized 4 tasks due to AST conflicts", "reasoning": "Parallel: [], Serialized: ['task-4', 'task-5', 'task-7', 'task-8']"}, "message": "Serialized 4 tasks due to AST conflicts"}
+{"event_type": "spawn", "timestamp": 1773904184.666729, "task_id": "task-4", "agent_id": "agent-task-4", "data": {}, "message": "Spawning worker for task-4 (serialized)"}
+{"event_type": "complete", "timestamp": 1773904421.3593578, "task_id": "task-4", "agent_id": "agent-task-4", "data": {"files_modified": [], "tokens_used": 6262, "cost_usd": 0.0}, "message": "Task task-4 completed"}
+{"event_type": "spawn", "timestamp": 1773904421.3652549, "task_id": "task-5", "agent_id": "agent-task-5", "data": {}, "message": "Spawning worker for task-5 (serialized)"}
+{"event_type": "complete", "timestamp": 1773904633.767554, "task_id": "task-5", "agent_id": "agent-task-5", "data": {"files_modified": [], "tokens_used": 31271, "cost_usd": 0.0}, "message": "Task task-5 completed"}
+{"event_type": "spawn", "timestamp": 1773904633.774338, "task_id": "task-7", "agent_id": "agent-task-7", "data": {}, "message": "Spawning worker for task-7 (serialized)"}
+{"event_type": "complete", "timestamp": 1773904764.004493, "task_id": "task-7", "agent_id": "agent-task-7", "data": {"files_modified": [], "tokens_used": 2797, "cost_usd": 0.0}, "message": "Task task-7 completed"}
+{"event_type": "spawn", "timestamp": 1773904764.011455, "task_id": "task-8", "agent_id": "agent-task-8", "data": {}, "message": "Spawning worker for task-8 (serialized)"}
+{"event_type": "complete", "timestamp": 1773904961.129987, "task_id": "task-8", "agent_id": "agent-task-8", "data": {"files_modified": [], "tokens_used": 8787, "cost_usd": 0.0}, "message": "Task task-8 completed"}
+{"event_type": "info", "timestamp": 1773904961.333087, "task_id": "", "agent_id": "", "data": {}, "message": "Batch 2: 1 tasks"}
+{"event_type": "spawn", "timestamp": 1773904961.333246, "task_id": "task-9", "agent_id": "agent-task-9", "data": {}, "message": "Spawning worker for task-9"}
+{"event_type": "complete", "timestamp": 1773904993.77481, "task_id": "task-9", "agent_id": "agent-task-9", "data": {"files_modified": [], "tokens_used": 593, "cost_usd": 0.0}, "message": "Task task-9 completed"}
+{"event_type": "info", "timestamp": 1773904993.977215, "task_id": "", "agent_id": "", "data": {}, "message": "Batch 3: 1 tasks"}
+{"event_type": "spawn", "timestamp": 1773904993.97759, "task_id": "task-10", "agent_id": "agent-task-10", "data": {}, "message": "Spawning worker for task-10"}
+{"event_type": "complete", "timestamp": 1773905058.81039, "task_id": "task-10", "agent_id": "agent-task-10", "data": {"files_modified": [], "tokens_used": 759, "cost_usd": 0.0}, "message": "Task task-10 completed"}
+{"event_type": "info", "timestamp": 1773905058.989842, "task_id": "", "agent_id": "", "data": {}, "message": "Batch 4: 1 tasks"}
+{"event_type": "spawn", "timestamp": 1773905058.9899461, "task_id": "task-11", "agent_id": "agent-task-11", "data": {}, "message": "Spawning worker for task-11"}
+{"event_type": "complete", "timestamp": 1773905128.274868, "task_id": "task-11", "agent_id": "agent-task-11", "data": {"files_modified": [], "tokens_used": 869, "cost_usd": 0.0}, "message": "Task task-11 completed"}
+{"event_type": "complete", "timestamp": 1773905128.4741251, "task_id": "", "agent_id": "", "data": {"done": 11}, "message": "Swarm complete: 7/11 tasks in 946.6s"}

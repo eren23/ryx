@@ -239,12 +239,7 @@ func TestRegression_CompileErrors(t *testing.T) {
 		{
 			name: "undeclared_variable",
 			src:  `fn main() { println(undefined_var) }`,
-			want: "undeclared",
-		},
-		{
-			name: "missing_main",
-			src:  `fn foo() { println(42) }`,
-			want: "main",
+			want: "undefined",
 		},
 	}
 

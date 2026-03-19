@@ -965,8 +965,10 @@ func TestDestructure(t *testing.T) {
 	codegen.EmitU16U16U16(&code, codegen.OpMakeEnum, 0, 0, 2)
 	codegen.EmitU16(&code, codegen.OpDestructure, 2)
 	// Stack now has field0, field1
-	codegen.EmitOp(&code, codegen.OpPrintln) // prints 20 (top)
-	codegen.EmitOp(&code, codegen.OpPrintln) // prints 10
+	codegen.EmitOp(&code, codegen.OpPrintln) // prints 20 (top); pushes unit result
+	codegen.EmitOp(&code, codegen.OpPop)     // discard unit result
+	codegen.EmitOp(&code, codegen.OpPrintln) // prints 10; pushes unit result
+	codegen.EmitOp(&code, codegen.OpPop)     // discard unit result
 	codegen.EmitOp(&code, codegen.OpConstUnit)
 	codegen.EmitOp(&code, codegen.OpReturn)
 

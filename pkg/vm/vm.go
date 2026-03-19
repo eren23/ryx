@@ -926,11 +926,13 @@ func (vm *VM) execute(fiber *Fiber) error {
 		case codegen.OpPrint:
 			v := fiber.Pop()
 			fmt.Fprint(vm.Stdout, StringValue(v, vm.Heap))
+			fiber.Push(UnitVal()) // push unit result; codegen expects all builtins to produce a value
 			frame.IP = ip + 1
 
 		case codegen.OpPrintln:
 			v := fiber.Pop()
 			fmt.Fprintln(vm.Stdout, StringValue(v, vm.Heap))
+			fiber.Push(UnitVal()) // push unit result; codegen expects all builtins to produce a value
 			frame.IP = ip + 1
 
 		case codegen.OpIntToFloat:

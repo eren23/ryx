@@ -1,20 +1,5 @@
-# Task: Filesystem stdlib expansion
+# Task: Integration test verification after bug fixes
 
-Add 8 filesystem functions to pkg/stdlib/io.go.
+After tasks 1-8 are complete, run the full test suite (go test ./...) to verify: (1) all unit tests still pass, (2) all 24 E2E programs produce correct output matching their .expected files, (3) concurrency tests pass, (4) no Go-level panics occur. If any tests still fail, document the remaining failures with root cause analysis. Run: go test ./pkg/... && go test ./tests/integration/ -v -count=1. Report the pass/fail count for E2E programs.
 
-1. FileExists: 1 arg (path string), returns BoolVal(os.Stat(path) == nil)
-2. DirList: 1 arg, returns Result<[String], String> using os.ReadDir, returns entry names only
-3. DirCreate: 1 arg, returns Result<Unit, String> using os.MkdirAll(path, 0755)
-4. PathJoin: 1 arg (array of strings), uses filepath.Join
-5. PathDirname: 1 arg, uses filepath.Dir
-6. PathBasename: 1 arg, uses filepath.Base
-7. PathExtension: 1 arg, uses filepath.Ext
-8. FileSize: 1 arg, returns Result<Int, String> using os.Stat(path).Size()
-
-New imports needed: "path/filepath"
-
-Use existing resolveString and resolveArray helpers (same package). Use existing makeResultOk/makeResultErr helpers.
-
-See goal spec section 8 for exact implementations.
-
-Target files: pkg/stdlib/io.go
+Target files: tests/integration/e2e_test.go
