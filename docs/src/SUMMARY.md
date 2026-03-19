@@ -38,4 +38,5 @@
 # Project
 
 - [Testing](project/testing.md)
+- [Swarm History And Versioning](project/swarm-history.md)
 - [Limitations and Roadmap](project/limitations-and-roadmap.md)

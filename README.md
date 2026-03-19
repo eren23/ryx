@@ -72,4 +72,5 @@ docs/         mdBook sources and generated GitHub Pages site
 ## Notes
 
 - The current CLI expects flags before positional file arguments, for example: `./ryx build -o /tmp/hello.ryxc examples/hello.ryx`
-- `go test ./...` currently fails in `tests/integration` with a VM panic; use the documented smoke commands in the docs for quick verification until that is fixed
+- The current merged swarm baseline on `main` is documented in `docs/src/project/swarm-history.md`
+- `go test ./...` passes on the current `main` branch after the latest code-only swarm merge
