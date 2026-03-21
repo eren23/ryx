@@ -422,6 +422,19 @@ func RegisterAll(r *vm.BuiltinRegistry) {
 
 	// Built-in trait methods (vm/builtins.go)
 	vm.RegisterBuiltinTraits(r)
+
+	// Graphics (graphics*.go)
+	RegisterGraphics(r)
+}
+
+// RegisterGraphics registers all graphics-related builtins.
+func RegisterGraphics(r *vm.BuiltinRegistry) {
+	RegisterWindowBuiltins(r)
+	RegisterDrawBuiltins(r)
+	RegisterColorBuiltins(r)
+	RegisterInputBuiltins(r)
+	RegisterBridgeBuiltins(r)
+	RegisterImageBuiltins(r)
 }
 
 // ---------------------------------------------------------------------------

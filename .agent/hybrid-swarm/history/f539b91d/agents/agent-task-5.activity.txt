@@ -1,0 +1,3 @@
+Compiles cleanly. Here's what was created:
+
+**`pkg/stdlib/gr

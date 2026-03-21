@@ -1,0 +1,16 @@
+# Task: Register graphics builtins in codegen
+
+Modify `pkg/codegen/codegen.go` to add all ~30+ graphics builtin names to the `callBuiltinNames` map (lines 123-170). Add entries for every graphics builtin:
+
+Window: `gfx_init`, `gfx_run`, `gfx_quit`, `gfx_set_title`
+Draw: `gfx_clear`, `gfx_set_color`, `gfx_pixel`, `gfx_line`, `gfx_rect`, `gfx_fill_rect`, `gfx_circle`, `gfx_fill_circle`, `gfx_text`
+Color: `gfx_rgb`, `gfx_rgba`, `COLOR_BLACK`, `COLOR_WHITE`, `COLOR_RED`, `COLOR_GREEN`, `COLOR_BLUE`, `COLOR_YELLOW`
+Input: `gfx_key_pressed`, `gfx_key_just_pressed`, `gfx_mouse_x`, `gfx_mouse_y`, `gfx_mouse_pressed`
+Keys: `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_SPACE`, `KEY_ESCAPE`, `KEY_ENTER`, `KEY_W`, `KEY_A`, `KEY_S`, `KEY_D`
+Screen: `gfx_width`, `gfx_height`, `gfx_fps`
+
+Follow the existing pattern in the map — each entry maps name string to `true`.
+
+Acceptance: `go build ./...` passes, compiler recognizes all graphics builtin names.
+
+Target files: pkg/codegen/codegen.go

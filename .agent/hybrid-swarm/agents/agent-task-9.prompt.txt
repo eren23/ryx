@@ -1,5 +1,22 @@
-# Task: Integration test verification after bug fixes
+# Task: Update raycaster with delta-time movement
 
-After tasks 1-8 are complete, run the full test suite (go test ./...) to verify: (1) all unit tests still pass, (2) all 24 E2E programs produce correct output matching their .expected files, (3) concurrency tests pass, (4) no Go-level panics occur. If any tests still fail, document the remaining failures with root cause analysis. Run: go test ./pkg/... && go test ./tests/integration/ -v -count=1. Report the pass/fail count for E2E programs.
+Update `examples/raycaster.ryx` to use delta-time-based movement instead of fixed per-frame speeds.
 
-Target files: tests/integration/e2e_test.go
+Changes:
+1. Replace `let move_speed = 0.12` and `let rot_speed = 0.03` with base speeds: `let base_move = 4.0` and `let base_rot = 2.0` (units per second).
+2. At the start of the frame callback, add: `let dt = gfx_delta_time()`
+3. Add guard: `let dt = if dt <= 0.0 { 1.0 / 60.0 } else { dt }` (or equivalent)
+4. Compute per-frame speeds: `let move_speed = base_move * dt` and `let rot_speed = base_rot * dt`
+5. Rest of movement code remains the same (it already uses move_speed/rot_speed)
+
+Read `examples/raycaster.ryx` for current state and variable names.
+
+Acceptance: `go build ./cmd/ryx/ && ./ryx check examples/raycaster.ryx` passes (type-check).
+
+Target files: examples/raycaster.ryx
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

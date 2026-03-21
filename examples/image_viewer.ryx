@@ -1,0 +1,66 @@
+// Image Viewer — loads and displays a PNG with zoom controls
+//
+// Controls:
+//   +/=    — zoom in
+//   -      — zoom out
+//   ESC    — quit
+//
+// NOTE: Place your own PNG file at examples/assets/sample.png before running.
+
+fn main() {
+    // Load the image (returns -1 if file not found)
+    let img = gfx_load_image("examples/assets/sample.png");
+    let iw = gfx_image_width(img);
+    let ih = gfx_image_height(img);
+
+    // Initialize the window
+    gfx_init(800, 600, "Ryx Image Viewer");
+
+    // Zoom level (mutable, captured by frame closure)
+    let mut zoom = 1.0;
+
+    let frame = || {
+        // Clear screen to black
+        gfx_clear(COLOR_BLACK());
+
+        // Zoom in with +/= key
+        if gfx_key_pressed(KEY_EQUAL()) {
+            zoom = zoom + 0.02;
+            if zoom > 10.0 {
+                zoom = 10.0
+            }
+        };
+
+        // Zoom out with - key
+        if gfx_key_pressed(KEY_MINUS()) {
+            zoom = zoom - 0.02;
+            if zoom < 0.1 {
+                zoom = 0.1
+            }
+        };
+
+        // Compute centered position accounting for zoom
+        let scaled_w = float_to_int(int_to_float(iw) * zoom);
+        let scaled_h = float_to_int(int_to_float(ih) * zoom);
+        let cx = 400 - scaled_w / 2;
+        let cy = 300 - scaled_h / 2;
+
+        // Draw the image
+        if zoom == 1.0 {
+            gfx_draw_image(img, cx, cy)
+        } else {
+            gfx_draw_image_scaled(img, cx, cy, zoom, zoom)
+        };
+
+        // Display zoom level
+        gfx_set_color(COLOR_WHITE());
+        gfx_text(10, 10, "Zoom: " ++ int_to_string(float_to_int(zoom * 100.0)) ++ "%");
+
+        // Quit on ESC
+        if gfx_key_pressed(KEY_ESCAPE()) {
+            gfx_quit()
+        }
+    };
+
+    gfx_run(frame)
+}

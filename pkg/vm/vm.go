@@ -26,6 +26,9 @@ type VM struct {
 
 	Stdout io.Writer // default os.Stdout
 
+	// curFiber tracks the currently executing fiber (set during execute).
+	curFiber *Fiber
+
 	// Source location tracking (updated by OpSourceLoc).
 	lastLine uint32
 	lastCol  uint16
@@ -140,6 +143,7 @@ func readU64(code []byte, off int) uint64 {
 // ---------------------------------------------------------------------------
 
 func (vm *VM) execute(fiber *Fiber) error {
+	vm.curFiber = fiber
 	code := vm.Program.Code
 	instrLeft := vm.Scheduler.Timeslice
 
@@ -619,6 +623,15 @@ func (vm *VM) execute(fiber *Fiber) error {
 
 			// Close upvalues in the current frame's range.
 			fiber.CloseUpvalues(frame.BP)
+
+			// Callback frames (pushed by InvokeCallback) return to the callback
+			// invoker instead of continuing normal bytecode execution.
+			if frame.CallbackFrame {
+				fiber.PopFrame()
+				fiber.SP = frame.BP - 1
+				fiber.Push(retVal)
+				return ErrCallbackReturn
+			}
 
 			fiber.PopFrame()
 

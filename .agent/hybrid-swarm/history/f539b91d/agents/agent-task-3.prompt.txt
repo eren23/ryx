@@ -1,0 +1,15 @@
+# Task: Color helper builtins
+
+Create `pkg/stdlib/graphics_colors.go` with pure color helper functions (no Ebiten import needed):
+
+- `gfx_rgb(r, g, b) -> Int`: pack RGB to `0xRRGGBBFF` via `(r<<24)|(g<<16)|(b<<8)|0xFF`
+- `gfx_rgba(r, g, b, a) -> Int`: pack RGBA to `0xRRGGBBAA` via `(r<<24)|(g<<16)|(b<<8)|a`
+- Named color constants as zero-arg builtins: `COLOR_BLACK`→`0x000000FF`, `COLOR_WHITE`→`0xFFFFFFFF`, `COLOR_RED`→`0xFF0000FF`, `COLOR_GREEN`→`0x00FF00FF`, `COLOR_BLUE`→`0x0000FFFF`, `COLOR_YELLOW`→`0xFFFF00FF`
+
+All functions take `vm.Value` args and return `vm.Value`. Follow the pattern in `pkg/stdlib/math_ops.go` for argument extraction.
+
+Export a `RegisterColorBuiltins(r *Registry)` function.
+
+Acceptance: compiles, color packing logic is correct.
+
+Target files: pkg/stdlib/graphics_colors.go

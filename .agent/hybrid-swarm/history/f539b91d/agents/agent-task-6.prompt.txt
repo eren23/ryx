@@ -1,0 +1,21 @@
+# Task: Drawing primitive builtins
+
+Create `pkg/stdlib/graphics_draw.go` with drawing primitive builtins. Each builtin creates a draw command with the current color and appends it to the GraphicsState draw queue:
+
+- `gfx_clear(color: Int) -> ()`: appends ClearCmd
+- `gfx_set_color(color: Int) -> ()`: sets current color in GraphicsState
+- `gfx_pixel(x: Int, y: Int) -> ()`: appends PixelCmd (1x1 fill rect)
+- `gfx_line(x1: Int, y1: Int, x2: Int, y2: Int) -> ()`: appends LineCmd
+- `gfx_rect(x: Int, y: Int, w: Int, h: Int) -> ()`: appends RectCmd (outline)
+- `gfx_fill_rect(x: Int, y: Int, w: Int, h: Int) -> ()`: appends FillRectCmd
+- `gfx_circle(cx: Int, cy: Int, r: Int) -> ()`: appends CircleCmd (outline)
+- `gfx_fill_circle(cx: Int, cy: Int, r: Int) -> ()`: appends FillCircleCmd
+- `gfx_text(x: Int, y: Int, s: String) -> ()`: appends TextCmd
+
+For Draw() rendering in the bridge: use `vector.StrokeLine`, `vector.DrawFilledRect`, `vector.StrokeRect`, `ebitenutil.DebugPrintAt` for text. Circle via `vector.DrawFilledCircle`/stroke approximation.
+
+Export a `RegisterDrawBuiltins(r *Registry)` function.
+
+Acceptance: compiles, can draw shapes on screen.
+
+Target files: pkg/stdlib/graphics_draw.go

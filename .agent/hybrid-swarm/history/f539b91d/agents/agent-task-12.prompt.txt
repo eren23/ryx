@@ -1,0 +1,24 @@
+# Task: Raycaster demo program
+
+Create `examples/raycaster.ryx` — a ~400-line Wolfenstein-style raycaster demo in Ryx:
+
+**Setup**: SCREEN_W=640, SCREEN_H=480, 16x16 map grid (0=empty, 1-4=wall types), player at (8.5, 8.5) facing north.
+
+**Per-frame logic in the callback**:
+1. Handle input: WASD/arrows for movement+rotation with collision detection against map walls. Use existing `sin()`, `cos()` builtins for rotation.
+2. DDA raycasting: for each screen column, cast a ray using the DDA algorithm (Digital Differential Analysis). Calculate perpendicular distance to avoid fisheye. Compute wall strip height.
+3. Color walls by type (1=red, 2=green, 3=blue, 4=yellow). Darken Y-side walls. Apply distance fog.
+4. Draw ceiling (dark gray) and floor (gray) with `gfx_fill_rect`.
+5. Draw wall strips with `gfx_line(x, draw_start, x, draw_end)`.
+6. Draw minimap in top-left (4px per tile).
+7. Show FPS with `gfx_text`.
+
+See the Raycaster Demo Spec in the goal document for detailed pseudocode.
+
+**Helper functions to define in Ryx**: `wall_color(type)`, `darken(color)`, `apply_shade(color, shade)`, `clamp(val, min, max)`, `map_get(x, y)` (2D→1D array lookup).
+
+Use existing trig builtins: `sin()`, `cos()`, `floor()`, `abs()`. Use `int_to_float()` and `float_to_int()` for type conversions.
+
+Acceptance: compiles, renders 3D perspective view with WASD movement at 60 FPS.
+
+Target files: examples/raycaster.ryx

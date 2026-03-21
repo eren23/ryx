@@ -467,10 +467,11 @@ type BasicBlock struct {
 
 // LocalDef describes an SSA local variable.
 type LocalDef struct {
-	ID      LocalID
-	Name    string // debug name (original source name or generated)
-	Type    types.Type
-	Mutable bool // original source variable was declared mutable
+	ID           LocalID
+	Name         string // debug name (original source name or generated)
+	Type         types.Type
+	Mutable      bool // original source variable was declared mutable
+	UpvalueAlias int  // index into the closure's upvalue array, or -1 if not a captured variable
 }
 
 // ---------------------------------------------------------------------------
@@ -497,9 +498,10 @@ func (f *Function) Block(id BlockID) *BasicBlock {
 func (f *Function) NewLocal(name string, typ types.Type) LocalID {
 	id := LocalID(len(f.Locals))
 	f.Locals = append(f.Locals, &LocalDef{
-		ID:   id,
-		Name: name,
-		Type: typ,
+		ID:           id,
+		Name:         name,
+		Type:         typ,
+		UpvalueAlias: -1,
 	})
 	return id
 }

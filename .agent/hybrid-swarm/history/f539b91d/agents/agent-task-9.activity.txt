@@ -1,0 +1,1 @@
+Build passes. The change adds a `RegisterGraphics` function 

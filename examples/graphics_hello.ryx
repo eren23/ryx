@@ -1,0 +1,45 @@
+// Graphics Hello - smoke test for the Ryx graphics API
+//
+// Opens a 640x480 window and draws basic shapes each frame:
+//   - Black background
+//   - Red filled rectangle
+//   - Green filled circle
+//   - Blue diagonal line
+//   - White "Hello Ryx Graphics!" text
+//
+// Press ESC to quit.
+
+fn main() {
+    // Initialize the graphics window
+    gfx_init(640, 480, "Hello Graphics");
+
+    // Define the frame callback
+    let frame = || {
+        // Clear screen to black
+        gfx_clear(COLOR_BLACK());
+
+        // Draw a filled red rectangle
+        gfx_set_color(COLOR_RED());
+        gfx_fill_rect(100, 100, 200, 150);
+
+        // Draw a filled green circle
+        gfx_set_color(COLOR_GREEN());
+        gfx_fill_circle(400, 300, 50);
+
+        // Draw a blue diagonal line corner to corner
+        gfx_set_color(COLOR_BLUE());
+        gfx_line(0, 0, 640, 480);
+
+        // Draw greeting text in white
+        gfx_set_color(COLOR_WHITE());
+        gfx_text(10, 10, "Hello Ryx Graphics!");
+
+        // Quit on ESC
+        if gfx_key_pressed(KEY_ESCAPE()) {
+            gfx_quit()
+        }
+    };
+
+    // Start the game loop
+    gfx_run(frame)
+}

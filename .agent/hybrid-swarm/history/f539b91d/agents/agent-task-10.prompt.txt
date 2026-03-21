@@ -1,0 +1,17 @@
+# Task: Graphics unit tests
+
+Create `pkg/stdlib/graphics_test.go` with unit tests:
+
+1. **Color packing tests**: verify `gfx_rgb(255,0,0)` returns `0xFF0000FF`, `gfx_rgba(0,255,0,128)` returns `0x00FF0080`, all named constants return correct values.
+
+2. **Draw command queue tests**: create a GraphicsState, append various DrawCommands, verify queue length and command types, test queue clearing.
+
+3. **Color unpacking tests**: verify `unpackRGBA()` correctly converts packed int to `color.RGBA`.
+
+4. **Screen info tests**: set GraphicsState width/height, verify `gfx_width()` and `gfx_height()` return correct values.
+
+Use build tag `//go:build !ci` or `-short` flag to skip tests that require Ebiten runtime (actual window creation).
+
+Acceptance: `go test ./pkg/stdlib/ -run Graphics -short` passes.
+
+Target files: pkg/stdlib/graphics_test.go

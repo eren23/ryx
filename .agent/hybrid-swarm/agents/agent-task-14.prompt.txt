@@ -1,5 +1,33 @@
-# Task: README documentation and final polish
+# Task: Integration tests and codegen verification
 
-Write comprehensive README.md covering: language tutorial (syntax, types, pattern matching, traits, closures, concurrency, error handling with code examples), architecture overview with compiler pipeline diagram (source → lexer → parser → resolver → type checker → HIR → MIR → optimize → codegen → VM), build and run instructions, REPL usage guide, bytecode instruction set reference (all 68 instructions), optimization passes explained, GC design and tuning guide, standard library reference (all 50+ functions and 6 traits), CLI reference (all subcommands and flags), test suite description with go test instructions, benchmark results and performance targets, config reference (vex_config.toml fields), grammar specification in EBNF, known limitations and future ideas (module system, incremental compilation, JIT, debugger, LSP server, package manager). Final pass: ensure go.mod dependencies are correct, all test files compile, project structure matches spec.
+Add integration and codegen tests verifying all new features work together.
 
-Target files: README.md
+Modify `tests/integration/e2e_test.go`:
+- Add compile-only test for `examples/raycaster.ryx` (headless, no display)
+- Add compile-only test for `examples/image_viewer.ryx` (headless, no display)
+- Verify the `closure_mut_capture` test case runs and produces expected output
+
+Modify `pkg/codegen/codegen_test.go`:
+- Add test: compile a closure with a mutable capture that is assigned inside an `if` block
+- Verify that `OpStoreUpvalue` is emitted for the assignment (NOT `OpStoreLocal`)
+- This validates the end-to-end fix from MIR through codegen
+
+Read for context:
+- `tests/integration/e2e_test.go` (existing compile/run test patterns)
+- `pkg/codegen/codegen_test.go` (existing codegen test patterns, disassembly helpers)
+
+Run full test suite: `go test ./...`
+
+Acceptance: `go test ./...` all green, no regressions.
+
+Target files: tests/integration/e2e_test.go, pkg/codegen/codegen_test.go
+
+## Related Tests
+These test files cover your target files — run them to verify:
+- pkg/codegen/codegen_test.go
+- tests/integration/e2e_test.go
+
+Verify: go test ./... pkg/codegen/codegen_test.go tests/integration/e2e_test.go
+
+## Context from Previous Runs
+No relevant learnings found for this project.

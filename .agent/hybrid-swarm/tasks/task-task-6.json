@@ -1,30 +1,23 @@
 {
   "task_id": "task-6",
-  "title": "Fix array index out of bounds in VM execution",
-  "description": "E2E tests game_of_life.ryx and graph_bfs.ryx fail with 'runtime error: index 25 out of bounds (length 25)' and 'index 10 out of bounds (length 10)'. These are off-by-one errors where the programs use 0-based indexing but are accessing index N for an array of length N. This could be in how range expressions (0..N) are compiled - the upper bound may be inclusive when it should be exclusive, causing iteration to go one past the end. Check how 'for i in 0..N' is desugared in HIR (pkg/hir/lower.go) - specifically whether the range end bound is exclusive (..) vs inclusive (..=). If the desugared while loop uses <= instead of < for '..' ranges, fix it to use strict less-than comparison.",
+  "title": "Add draw image commands to graphics_image.go",
+  "description": "Extend `pkg/stdlib/graphics_image.go` with DrawImageCmd and draw builtins.\n\nAdd to the existing file:\n1. `DrawImageCmd` struct: `Handle int`, `X int`, `Y int`, `ScaleX float64`, `ScaleY float64`. Must implement the `DrawCommand` interface.\n2. `DrawImageCmd.Execute(screen *ebiten.Image)`: look up image from `imageStore` by Handle, create `ebiten.DrawImageOptions`, apply `GeoM.Scale(ScaleX, ScaleY)` if not (1.0, 1.0), apply `GeoM.Translate(float64(X), float64(Y))`, call `screen.DrawImage(img, opts)`. Handle invalid handles gracefully (skip draw).\n3. `GfxDrawImage(args []vm.Value, heap *vm.Heap) vm.Value`: extracts (handle: Int, x: Int, y: Int), creates `DrawImageCmd{ScaleX: 1.0, ScaleY: 1.0}`, appends to draw queue via `AppendCommand`.\n4. `GfxDrawImageScaled(args []vm.Value, heap *vm.Heap) vm.Value`: extracts (handle: Int, x: Int, y: Int, sx: Float, sy: Float), creates `DrawImageCmd` with given scale.\n5. Add both to `RegisterImageBuiltins`.\n\nRead for context:\n- `pkg/stdlib/graphics_bridge.go` (DrawCommand interface, AppendCommand function)\n- `pkg/stdlib/graphics_draw.go` (existing DrawCommand implementations like FillRectCmd)\n- `pkg/stdlib/graphics_image.go` (the file created in task-5)\n\nAcceptance: `go build ./pkg/stdlib/...` compiles.",
   "status": "done",
   "task_kind": "implement",
   "role_hint": "impl",
-  "deps": [],
+  "deps": [
+    "task-5"
+  ],
   "target_files": [
-    "pkg/hir/lower.go"
+    "pkg/stdlib/graphics_image.go"
   ],
   "read_files": [],
   "files_modified": [],
-  "result_summary": "",
+  "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e63bf808-401b-4996-a4d0-09aa8060646a\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"e601b646-b462-4be6-bdd0-9f7399161f4e\",\"session_id\":\"1ea6a3a2-5a1f-4e5d-8d65-e4ee80764c1a\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"e63bf808-401b-4996-a4d0-09aa8060646a\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"{\\n  \\\"hookSpecificOutput\\\": {\\n    \\\"hookEventName\\\": \\\"SessionStart\\\",\\n    \\\"additionalContext\\\": \\\"<EXTREMELY_IMPORTANT>\\\\nYou have superpowers.\\\\n\\\\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\\\\n\\\\n---\\\\nname: using-superpowers\\\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\\\n---\\\\n\\\\n<SUBAGENT-STOP>\\\\nIf you were dispatched as a subagent to execute a specific task, skip this skill.\\\\n</SUBAGENT-STOP>\\\\n\\\\n<EXTREMELY-IMPORTANT>\\\\nIf you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.\\\\n\\\\nIF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.\\\\n\\\\nThis is not negotiable. This is not optional. You cannot rationalize your way out of this.\\\\n</EXTREMELY-IMPORTANT>\\\\n\\\\n## Instruction Priority\\\\n\\\\nSuperpowers skills override default system prompt behavior, but **user instructions always take precedence**:\\\\n\\\\n1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) \u2014 highest priority\\\\n2. **Superpowers skills** \u2014 override default system behavior where they conflict\\\\n3. **Default system prompt** \u2014 lowest priority\\\\n\\\\nIf CLAUDE.md, GEMINI.md, or AGENTS.md says \\\\\\\"don't use TDD\\\\\\\" and a skill says \\\\\\\"always use TDD,\\\\\\\" follow the user's instructions. The user is in control.\\\\n\\\\n## How to Access Skills\\\\n\\\\n**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you\u2014follow it directly. Never use the Read tool on skill files.\\\\n\\\\n**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.\\\\n\\\\n**In other environments:** Check your platform's documentation for how skills are loaded.\\\\n\\\\n## Platform Adaptation\\\\n\\\\nSkills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.\\\\n\\\\n# Using Skills\\\\n\\\\n## The Rule\\\\n\\\\n**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.\\\\n\\\\n```dot\\\\ndigraph skill_flow {\\\\n    \\\\\\\"User message received\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" [shape=doublecircle];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" [shape=box];\\\\n    \\\\\\\"Might any skill apply?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Invoke Skill tool\\\\\\\" [shape=box];\\\\n    \\\\\\\"Announce: 'Using [skill] to [purpose]'\\\\\\\" [shape=box];\\\\n    \\\\\\\"Has checklist?\\\\\\\" [shape=diamond];\\\\n    \\\\\\\"Create TodoWrite todo per item\\\\\\\" [shape=box];\\\\n    \\\\\\\"Follow skill exactly\\\\\\\" [shape=box];\\\\n    \\\\\\\"Respond (including clarifications)\\\\\\\" [shape=doublecircle];\\\\n\\\\n    \\\\\\\"About to EnterPlanMode?\\\\\\\" -> \\\\\\\"Already brainstormed?\\\\\\\";\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Invoke brainstorming skill\\\\\\\" [label=\\\\\\\"no\\\\\\\"];\\\\n    \\\\\\\"Already brainstormed?\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\" [label=\\\\\\\"yes\\\\\\\"];\\\\n    \\\\\\\"Invoke brainstorming skill\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n\\\\n    \\\\\\\"User message received\\\\\\\" -> \\\\\\\"Might any skill apply?\\\\\\\";\\\\n ",
   "symbol_scope": [],
-  "tokens_used": 0,
+  "tokens_used": 2921,
   "cost_usd": 0.0,
-  "attempt_count": 1,
-  "attempt_history": [
-    {
-      "attempt": 1,
-      "error": "Task timed out after 600.0s",
-      "timestamp": "2026-03-18T20:57:44.700016+00:00",
-      "duration_s": 600.0195679664612,
-      "tokens_used": 0,
-      "failure_cause": "timeout"
-    }
-  ],
+  "attempt_count": 0,
+  "attempt_history": [],
   "has_diff": false
 }

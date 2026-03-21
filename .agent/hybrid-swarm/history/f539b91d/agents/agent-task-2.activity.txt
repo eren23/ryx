@@ -1,0 +1,1 @@
+Working. The fix was removing the `CallbackInvoker` wiring a

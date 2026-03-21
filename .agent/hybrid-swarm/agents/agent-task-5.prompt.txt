@@ -1,5 +1,29 @@
-# Task: Fix VM stack underflow panics in arithmetic operations
+# Task: Create graphics_image.go with ImageStore and PNG loading
 
-E2E tests fibonacci.ryx, quicksort.ryx, and matrix_multiply.ryx crash with Go-level panics: 'index out of range [-1]' in fiber.go:89 (Pop) and 'index out of range [1] with length 1'. These indicate the VM is trying to pop from an empty stack or access stack positions that don't exist. This means the bytecode being generated has mismatched push/pop counts for some operation sequences. Common causes: binary operations not finding both operands on stack, function calls not properly setting up arguments, or return values not being handled correctly. Debug by examining the bytecode generated for fibonacci.ryx (a simple case) and tracing the stack state. Fix the codegen to emit correct stack-balanced bytecode.
+Create `pkg/stdlib/graphics_image.go` with the ImageStore and PNG loading/query builtins.
 
-Target files: pkg/codegen/codegen.go, pkg/vm/vm.go, pkg/vm/fiber.go
+Implementation:
+1. `ImageStore` struct with `images []*ebiten.Image` and `sync.Mutex`
+2. Global `var imageStore = &ImageStore{}`
+3. `GfxLoadImage(args []vm.Value, heap *vm.Heap) vm.Value`: takes String path arg, opens file, decodes PNG via `image/png`, converts via `ebiten.NewImageFromImage()`, appends to `imageStore.images`, returns `vm.IntVal(handleID)`. Returns `vm.IntVal(-1)` on error.
+4. `GfxImageWidth(args []vm.Value, heap *vm.Heap) vm.Value`: given Int handle, returns image width as IntVal
+5. `GfxImageHeight(args []vm.Value, heap *vm.Heap) vm.Value`: given Int handle, returns image height as IntVal
+6. `RegisterImageBuiltins(r *vm.BuiltinRegistry)` function that registers `gfx_load_image`, `gfx_image_width`, `gfx_image_height`
+
+Follow the same patterns as `pkg/stdlib/graphics_bridge.go` (GraphicsState) and `pkg/stdlib/graphics_draw.go` (builtin function signatures).
+
+Read for context:
+- `pkg/stdlib/graphics_bridge.go` (GraphicsState pattern, mutex usage)
+- `pkg/stdlib/graphics_draw.go` (builtin function patterns)
+- `pkg/stdlib/core.go` (registration pattern)
+- `pkg/vm/value.go` (Value types: IntVal, FloatVal, StringVal)
+
+Acceptance: `go build ./pkg/stdlib/...` compiles.
+
+Target files: pkg/stdlib/graphics_image.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

@@ -1,0 +1,1 @@
+Everything compiles. Here's what was created in `pkg/stdlib/

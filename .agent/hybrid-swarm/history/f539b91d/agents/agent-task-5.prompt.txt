@@ -1,0 +1,16 @@
+# Task: Window management builtins
+
+Create `pkg/stdlib/graphics.go` with window management builtins:
+
+- `gfx_init(w: Int, h: Int, title: String) -> ()`: stores window config in `GraphicsState` singleton, calls `ebiten.SetWindowSize(w, h)` and `ebiten.SetWindowTitle(title)`
+- `gfx_run(callback: fn() -> ()) -> ()`: stores callback in GraphicsState, calls `ebiten.RunGame(&RyxGame{...})`. The callback is a `vm.Value` (closure/function). Uses `CallbackInvoker` from `array_ops.go:629-631`.
+- `gfx_quit() -> ()`: sets exit flag, returns `ebiten.Termination` error from next Update()
+- `gfx_set_title(title: String) -> ()`: calls `ebiten.SetWindowTitle()`
+
+Export a `RegisterWindowBuiltins(r *Registry)` function.
+
+Follow the builtin function signature pattern: `func(args []vm.Value, heap *vm.Heap) (vm.Value, error)`.
+
+Acceptance: compiles, `gfx_init` + `gfx_run` would open a window.
+
+Target files: pkg/stdlib/graphics.go

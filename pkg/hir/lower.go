@@ -1027,8 +1027,9 @@ func (l *lowerer) lowerLambdaExpr(e *parser.LambdaExpr) Expr {
 	body := l.lowerExpr(e.Body)
 
 	// Identify captured variables: free variables in the body that are not
-	// parameters of this lambda.
-	captures := identifyCaptures(body, paramNames)
+	// parameters of this lambda or global/builtin names.
+	globals := l.globalNames()
+	captures := identifyCaptures(body, paramNames, globals)
 
 	return &Lambda{
 		exprBase: exprBase{Typ: l.nodeType(e.Span()), Span: e.Span()},
@@ -1038,22 +1039,46 @@ func (l *lowerer) lowerLambdaExpr(e *parser.LambdaExpr) Expr {
 	}
 }
 
+// globalNames returns a set of names that should not be captured by closures
+// (top-level functions and builtins resolved in the prelude/root scope).
+func (l *lowerer) globalNames() map[string]bool {
+	globals := make(map[string]bool)
+	if l.resolved != nil && l.resolved.RootScope != nil {
+		scope := l.resolved.RootScope
+		// Walk up to the prelude scope (builtins).
+		if scope.Parent != nil {
+			for name, sym := range scope.Parent.Symbols {
+				if sym.Kind == resolver.FunctionSymbol {
+					globals[name] = true
+				}
+			}
+		}
+		// Root-scope function definitions (user-defined top-level functions).
+		for name, sym := range scope.Symbols {
+			if sym.Kind == resolver.FunctionSymbol {
+				globals[name] = true
+			}
+		}
+	}
+	return globals
+}
+
 // identifyCaptures walks an HIR expression and finds all VarRef names that are
-// not in the provided local scope (parameters). These are captured variables.
-func identifyCaptures(expr Expr, locals map[string]bool) []Capture {
+// not in the provided local scope (parameters) and not global/builtin names.
+func identifyCaptures(expr Expr, locals map[string]bool, globals map[string]bool) []Capture {
 	seen := make(map[string]bool)
 	var captures []Capture
-	walkExprForCaptures(expr, locals, seen, &captures)
+	walkExprForCaptures(expr, locals, globals, seen, &captures)
 	return captures
 }
 
-func walkExprForCaptures(expr Expr, locals map[string]bool, seen map[string]bool, captures *[]Capture) {
+func walkExprForCaptures(expr Expr, locals map[string]bool, globals map[string]bool, seen map[string]bool, captures *[]Capture) {
 	if expr == nil {
 		return
 	}
 	switch e := expr.(type) {
 	case *VarRef:
-		if !locals[e.Name] && !seen[e.Name] && e.Name != "self" {
+		if !locals[e.Name] && !globals[e.Name] && !seen[e.Name] && e.Name != "self" {
 			seen[e.Name] = true
 			*captures = append(*captures, Capture{Name: e.Name, Type: e.Typ})
 		}
@@ -1061,63 +1086,63 @@ func walkExprForCaptures(expr Expr, locals map[string]bool, seen map[string]bool
 		// Track let bindings as local to this block.
 		innerLocals := copyStringSet(locals)
 		for _, s := range e.Stmts {
-			walkStmtForCaptures(s, innerLocals, seen, captures)
+			walkStmtForCaptures(s, innerLocals, globals, seen, captures)
 			if ls, ok := s.(*LetStmt); ok {
 				innerLocals[ls.Name] = true
 			}
 		}
 		if e.TrailingExpr != nil {
-			walkExprForCaptures(e.TrailingExpr, innerLocals, seen, captures)
+			walkExprForCaptures(e.TrailingExpr, innerLocals, globals, seen, captures)
 		}
 	case *BinaryOp:
-		walkExprForCaptures(e.Left, locals, seen, captures)
-		walkExprForCaptures(e.Right, locals, seen, captures)
+		walkExprForCaptures(e.Left, locals, globals, seen, captures)
+		walkExprForCaptures(e.Right, locals, globals, seen, captures)
 	case *UnaryOp:
-		walkExprForCaptures(e.Operand, locals, seen, captures)
+		walkExprForCaptures(e.Operand, locals, globals, seen, captures)
 	case *Call:
-		walkExprForCaptures(e.Func, locals, seen, captures)
+		walkExprForCaptures(e.Func, locals, globals, seen, captures)
 		for _, arg := range e.Args {
-			walkExprForCaptures(arg, locals, seen, captures)
+			walkExprForCaptures(arg, locals, globals, seen, captures)
 		}
 	case *StaticCall:
 		for _, arg := range e.Args {
-			walkExprForCaptures(arg, locals, seen, captures)
+			walkExprForCaptures(arg, locals, globals, seen, captures)
 		}
 	case *IfExpr:
-		walkExprForCaptures(e.Cond, locals, seen, captures)
-		walkExprForCaptures(e.Then, locals, seen, captures)
+		walkExprForCaptures(e.Cond, locals, globals, seen, captures)
+		walkExprForCaptures(e.Then, locals, globals, seen, captures)
 		if e.Else != nil {
-			walkExprForCaptures(e.Else, locals, seen, captures)
+			walkExprForCaptures(e.Else, locals, globals, seen, captures)
 		}
 	case *WhileExpr:
-		walkExprForCaptures(e.Cond, locals, seen, captures)
-		walkExprForCaptures(e.Body, locals, seen, captures)
+		walkExprForCaptures(e.Cond, locals, globals, seen, captures)
+		walkExprForCaptures(e.Body, locals, globals, seen, captures)
 	case *LoopExpr:
-		walkExprForCaptures(e.Body, locals, seen, captures)
+		walkExprForCaptures(e.Body, locals, globals, seen, captures)
 	case *FieldAccess:
-		walkExprForCaptures(e.Object, locals, seen, captures)
+		walkExprForCaptures(e.Object, locals, globals, seen, captures)
 	case *Index:
-		walkExprForCaptures(e.Object, locals, seen, captures)
-		walkExprForCaptures(e.Idx, locals, seen, captures)
+		walkExprForCaptures(e.Object, locals, globals, seen, captures)
+		walkExprForCaptures(e.Idx, locals, globals, seen, captures)
 	case *ArrayLiteral:
 		for _, elem := range e.Elems {
-			walkExprForCaptures(elem, locals, seen, captures)
+			walkExprForCaptures(elem, locals, globals, seen, captures)
 		}
 	case *TupleLiteral:
 		for _, elem := range e.Elems {
-			walkExprForCaptures(elem, locals, seen, captures)
+			walkExprForCaptures(elem, locals, globals, seen, captures)
 		}
 	case *StructLiteral:
 		for _, f := range e.Fields {
-			walkExprForCaptures(f.Value, locals, seen, captures)
+			walkExprForCaptures(f.Value, locals, globals, seen, captures)
 		}
 	case *MatchExpr:
-		walkExprForCaptures(e.Scrutinee, locals, seen, captures)
+		walkExprForCaptures(e.Scrutinee, locals, globals, seen, captures)
 		for _, arm := range e.Arms {
 			if arm.Guard != nil {
-				walkExprForCaptures(arm.Guard, locals, seen, captures)
+				walkExprForCaptures(arm.Guard, locals, globals, seen, captures)
 			}
-			walkExprForCaptures(arm.Body, locals, seen, captures)
+			walkExprForCaptures(arm.Body, locals, globals, seen, captures)
 		}
 	case *Lambda:
 		// Nested lambda: its own params are local.
@@ -1125,29 +1150,29 @@ func walkExprForCaptures(expr Expr, locals map[string]bool, seen map[string]bool
 		for _, p := range e.Params {
 			innerLocals[p.Name] = true
 		}
-		walkExprForCaptures(e.Body, innerLocals, seen, captures)
+		walkExprForCaptures(e.Body, innerLocals, globals, seen, captures)
 	case *ReturnExpr:
 		if e.Value != nil {
-			walkExprForCaptures(e.Value, locals, seen, captures)
+			walkExprForCaptures(e.Value, locals, globals, seen, captures)
 		}
 	case *Cast:
-		walkExprForCaptures(e.Expr, locals, seen, captures)
+		walkExprForCaptures(e.Expr, locals, globals, seen, captures)
 	case *Spawn:
-		walkExprForCaptures(e.Body, locals, seen, captures)
+		walkExprForCaptures(e.Body, locals, globals, seen, captures)
 	}
 }
 
-func walkStmtForCaptures(stmt Stmt, locals map[string]bool, seen map[string]bool, captures *[]Capture) {
+func walkStmtForCaptures(stmt Stmt, locals map[string]bool, globals map[string]bool, seen map[string]bool, captures *[]Capture) {
 	switch s := stmt.(type) {
 	case *LetStmt:
 		if s.Value != nil {
-			walkExprForCaptures(s.Value, locals, seen, captures)
+			walkExprForCaptures(s.Value, locals, globals, seen, captures)
 		}
 	case *ExprStmt:
-		walkExprForCaptures(s.Expr, locals, seen, captures)
+		walkExprForCaptures(s.Expr, locals, globals, seen, captures)
 	case *ReturnStmt:
 		if s.Value != nil {
-			walkExprForCaptures(s.Value, locals, seen, captures)
+			walkExprForCaptures(s.Value, locals, globals, seen, captures)
 		}
 	}
 }

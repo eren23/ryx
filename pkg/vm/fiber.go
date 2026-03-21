@@ -1,5 +1,11 @@
 package vm
 
+import "errors"
+
+// ErrCallbackReturn is a sentinel error returned by execute when a callback
+// frame's OpReturn is reached, signalling the callback invoker to collect the result.
+var ErrCallbackReturn = errors.New("callback return")
+
 // ---------------------------------------------------------------------------
 // Fiber states
 // ---------------------------------------------------------------------------
@@ -36,10 +42,11 @@ const MaxCallDepth = 1024
 
 // CallFrame represents one activation record on the call stack.
 type CallFrame struct {
-	FuncIdx uint32      // index into CompiledProgram.Functions
-	IP      int         // absolute offset into Code
-	BP      int         // base pointer: index into Stack where locals start
-	Closure *ClosureObj // non-nil when executing a closure
+	FuncIdx       uint32      // index into CompiledProgram.Functions
+	IP            int         // absolute offset into Code
+	BP            int         // base pointer: index into Stack where locals start
+	Closure       *ClosureObj // non-nil when executing a closure
+	CallbackFrame bool        // true when frame was pushed by InvokeCallback
 }
 
 // ---------------------------------------------------------------------------

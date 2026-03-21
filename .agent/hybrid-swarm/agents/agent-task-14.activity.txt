@@ -1,3 +1,1 @@
-The README is written. Here's the final status:
-
-**Build:** 
+The only failure is a pre-existing flaky GC test (`TestGCCon

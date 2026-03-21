@@ -1,1 +1,3 @@
-All tests pass, including `TestE2EPrograms/hash_map` and `Te
+All tests pass. Here's what I did:
+
+**`pkg/stdlib/core.go`:*

@@ -1,5 +1,34 @@
-# Task: Integration tests, e2e program tests, and example programs
+# Task: Create image_viewer.ryx example with key constants
 
-Write all 24 example/test .vex programs with .expected output files in tests/testdata/programs/ (hello, fibonacci, quicksort, binary_tree, linked_list, hash_map, closures, pattern_matching, traits, generics_complex, channels_basic, channels_fanout, producer_consumer, dining_philosophers, pipeline, adt_expression, game_of_life, json_parser, brainfuck_interp, mandelbrot, red_black_tree, sieve_of_eratosthenes, graph_bfs, matrix_multiply). Implement tests/integration/e2e_test.go: compile each .vex, run in VM, compare stdout to .expected. Implement concurrency_test.go (100-fiber counter, fan-out/fan-in, pipeline, deadlock detection, 1000 fibers). Implement gc_stress_test.go (1M objects, closure chains, concurrent allocation, write barrier under GC, pause time p99 < 10ms). Implement error_message_test.go (verify all documented error formats). Implement regression_test.go (placeholder). Write 5 examples/ programs (hello, calculator, todo_list, concurrent_primes, expression_evaluator). Write benchmarks in tests/benchmark/ (lexer, parser, typecheck, codegen, VM dispatch, fibonacci, quicksort, GC pause, GC throughput, end-to-end).
+Create `examples/image_viewer.ryx` and add any missing key constants.
 
-Target files: tests/testdata/programs/hello.vex, tests/testdata/programs/fibonacci.vex, tests/testdata/programs/quicksort.vex, tests/testdata/programs/binary_tree.vex, tests/testdata/programs/closures.vex, tests/testdata/programs/pattern_matching.vex, tests/testdata/programs/traits.vex, tests/testdata/programs/channels_basic.vex, tests/testdata/programs/pipeline.vex, tests/testdata/programs/sieve_of_eratosthenes.vex, tests/integration/e2e_test.go, tests/integration/concurrency_test.go, tests/integration/gc_stress_test.go, tests/integration/error_message_test.go, tests/integration/regression_test.go, tests/integration/stdlib_test.go, tests/benchmark/bench_lexer_test.go, tests/benchmark/bench_vm_test.go, tests/benchmark/bench_gc_test.go, tests/benchmark/bench_programs_test.go, examples/hello.vex, examples/calculator.vex, examples/concurrent_primes.vex, examples/expression_evaluator.vex
+Create `examples/image_viewer.ryx`:
+1. Load a PNG: `let img = gfx_load_image("examples/assets/sample.png")`
+2. Get dimensions: `let iw = gfx_image_width(img)`, `let ih = gfx_image_height(img)`
+3. Init window: `gfx_init(800, 600, "Ryx Image Viewer")`
+4. Frame callback:
+   - Clear screen black
+   - Draw image centered: compute `cx = 400 - iw/2`, `cy = 300 - ih/2`
+   - Add zoom support: `let mut zoom = 1.0`, +/- keys adjust zoom (clamp to 0.1-10.0 range)
+   - Use `gfx_draw_image_scaled` when zoom != 1.0, `gfx_draw_image` otherwise
+   - ESC to quit
+5. Add a note/comment that users should place their own PNG at the sample path
+
+Modify `pkg/stdlib/graphics_input.go`:
+- Add `KEY_EQUAL` (for +/=) and `KEY_MINUS` key constants if not already present
+- Follow existing patterns for key constant registration
+
+Also create `examples/assets/` directory (just ensure it exists; actual sample PNG is optional).
+
+Read `pkg/stdlib/graphics_input.go` for existing key constant patterns.
+Read `pkg/codegen/codegen.go` if new key constants need codegen registration.
+
+Acceptance: `go build ./cmd/ryx/` compiles. The example type-checks.
+
+Target files: examples/image_viewer.ryx, pkg/stdlib/graphics_input.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

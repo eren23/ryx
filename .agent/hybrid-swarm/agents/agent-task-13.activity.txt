@@ -1,1 +1,3 @@
-All requested files already exist with complete, real implem
+All done. Here's what was implemented:
+
+**`pkg/stdlib/graphi

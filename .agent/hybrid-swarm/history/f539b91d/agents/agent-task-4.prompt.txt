@@ -1,0 +1,20 @@
+# Task: Graphics bridge core and screen info
+
+Create `pkg/stdlib/graphics_bridge.go` implementing the Ebiten bridge:
+
+1. **GraphicsState singleton**: window width/height/title, current draw color (packed RGBA int), draw command queue (slice), running flag, frame callback (`vm.Value`), heap pointer (`*vm.Heap`).
+
+2. **Draw command types**: Define an interface `DrawCommand` and concrete types: `ClearCmd{Color}`, `PixelCmd{X,Y}`, `LineCmd{X1,Y1,X2,Y2}`, `RectCmd{X,Y,W,H}`, `FillRectCmd{X,Y,W,H}`, `CircleCmd{CX,CY,R}`, `FillCircleCmd{CX,CY,R}`, `TextCmd{X,Y,Text}`. Each stores the color at time of creation.
+
+3. **RyxGame struct** implementing `ebiten.Game`:
+   - `Update()`: invokes the Ryx frame callback via `stdlib.CallbackInvoker` (see `pkg/stdlib/array_ops.go:629-631` for the pattern)
+   - `Draw(screen)`: iterates draw command queue, renders each to screen using `ebiten/v2/vector` and `ebiten/v2/ebitenutil`, then clears the queue
+   - `Layout(outsideW, outsideH)`: returns configured width/height
+
+4. **Screen info builtins**: `gfx_width() -> Int`, `gfx_height() -> Int`, `gfx_fps() -> Float` (uses `ebiten.ActualFPS()`).
+
+5. Helper functions: `AppendDrawCommand(cmd)`, `GetGraphicsState()`, `SetGraphicsState(...)`, `unpackRGBA(packed int64) -> color.RGBA`.
+
+Acceptance: compiles, `RyxGame` satisfies `ebiten.Game` interface.
+
+Target files: pkg/stdlib/graphics_bridge.go

@@ -223,6 +223,56 @@ func TestE2ECompileOnly(t *testing.T) {
 	}
 }
 
+// TestE2EExamplesCompileOnly verifies that example programs (which may use
+// graphics/display and cannot run headless) at least compile through the
+// full pipeline without errors.
+func TestE2EExamplesCompileOnly(t *testing.T) {
+	examplesDir := filepath.Join("..", "..", "examples")
+
+	tests := []string{
+		"raycaster.ryx",
+		"image_viewer.ryx",
+	}
+
+	for _, file := range tests {
+		name := strings.TrimSuffix(file, ".ryx")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			srcPath := filepath.Join(examplesDir, file)
+			srcBytes, err := os.ReadFile(srcPath)
+			if err != nil {
+				t.Fatalf("failed to read source: %v", err)
+			}
+
+			_, compileErr := compile(string(srcBytes), file)
+			if compileErr != nil {
+				t.Errorf("compilation failed: %v", compileErr)
+			}
+		})
+	}
+}
+
+// TestE2EClosureMutCapture explicitly verifies that the closure_mut_capture
+// test case runs and produces expected output (1, 2, 3).
+func TestE2EClosureMutCapture(t *testing.T) {
+	srcPath := filepath.Join("..", "testdata", "programs", "closure_mut_capture.ryx")
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("failed to read source: %v", err)
+	}
+
+	got, runErr := compileAndRun(string(srcBytes), "closure_mut_capture.ryx")
+	if runErr != nil {
+		t.Fatalf("compile/run error: %v", runErr)
+	}
+
+	expected := "1\n2\n3\n"
+	if got != expected {
+		t.Errorf("output mismatch\n--- expected ---\n%s\n--- got ---\n%s", expected, got)
+	}
+}
+
 // compile runs the Ryx compiler pipeline (without executing) and returns
 // the compiled program or an error.
 func compile(src, filename string) (*codegen.CompiledProgram, error) {

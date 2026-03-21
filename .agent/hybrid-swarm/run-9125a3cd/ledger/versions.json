@@ -1,0 +1,13 @@
+{
+  "pkg/mir/builder.go": "64577990c3a21eee7f4ecf5589d74b91e2393b7965bcb6cb7f8b16d43532a081",
+  "pkg/stdlib/graphics_bridge.go": "c75a963662dc6312bd78e5207af02508c3b9422c8ff016393bf8e4f616eac292",
+  "pkg/mir/mir_test.go": "e497e7ab3aea0640f28fd8b95bc80c67ccec3efaf92fa4d7f57d58e5f41a0da7",
+  "pkg/stdlib/graphics_image.go": "e977e33cf360612387e861f44bd02d05faa8b01355338226b06747b067a8336d",
+  "pkg/stdlib/core.go": "ab9b4501c7a4058301dc71fb3b0f602885d600ceaac47c5e258fe2491c07d1f5",
+  "pkg/codegen/codegen.go": "9941cd813b08b69d6acfa795c0f121a33ea62a53d42c6a39ad66a4f3de32841d",
+  "pkg/stdlib/graphics_test.go": "dcc01e3237de045e81ae00b4a3ce94b03da42a856ef3ec7bd0c8065ca4e64fcf",
+  "examples/raycaster.ryx": "1c6d58e60f48721e94127aaefa321a517d2f7ac8857adcfb3c135aaf8f663eda",
+  "pkg/stdlib/graphics_input.go": "a03b41a77d3ae23661100924801db84bed2b1a5320f98e87d38bcb9c2af9ef7a",
+  "tests/integration/e2e_test.go": "95ee691e6b62cdc506614699d0c343b1c30bcf099e93b1d9e6a31ca28ff38880",
+  "pkg/codegen/codegen_test.go": "abe2ca85d6e249b17d5f8dbded10ea5ad5c684864323490f1a242a5d005c46f5"
+}

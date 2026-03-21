@@ -192,15 +192,16 @@ func removeDeadStmts(fn *mir.Function) {
 
 		for _, blk := range fn.Blocks {
 			for _, phi := range blk.Phis {
-				if used[phi.Dest] {
+				if used[phi.Dest] || (int(phi.Dest) < len(fn.Locals) && fn.Locals[int(phi.Dest)].UpvalueAlias >= 0) {
 					for _, v := range phi.Args {
 						markValue(v)
 					}
+					used[phi.Dest] = true
 				}
 			}
 			for _, stmt := range blk.Stmts {
 				dest := stmt.DestLocal()
-				if dest == mir.NoLocal || used[dest] || hasSideEffect(stmt) {
+				if dest == mir.NoLocal || used[dest] || hasSideEffectWithLocals(stmt, fn) {
 					markStmtOperands(stmt)
 					if dest != mir.NoLocal {
 						used[dest] = true
@@ -228,16 +229,16 @@ func removeDeadStmts(fn *mir.Function) {
 		var newStmts []mir.Stmt
 		for _, stmt := range blk.Stmts {
 			dest := stmt.DestLocal()
-			if dest == mir.NoLocal || used[dest] || hasSideEffect(stmt) {
+			if dest == mir.NoLocal || used[dest] || hasSideEffectWithLocals(stmt, fn) {
 				newStmts = append(newStmts, stmt)
 			}
 		}
 		blk.Stmts = newStmts
 
-		// Remove unused phi nodes.
+		// Remove unused phi nodes (keep upvalue-aliased phis — they emit OpStoreUpvalue).
 		var newPhis []*mir.Phi
 		for _, phi := range blk.Phis {
-			if used[phi.Dest] {
+			if used[phi.Dest] || (int(phi.Dest) < len(fn.Locals) && fn.Locals[int(phi.Dest)].UpvalueAlias >= 0) {
 				newPhis = append(newPhis, phi)
 			}
 		}
@@ -247,9 +248,23 @@ func removeDeadStmts(fn *mir.Function) {
 
 func hasSideEffect(stmt mir.Stmt) bool {
 	switch stmt.(type) {
-	case *mir.CallStmt, *mir.ChannelSendStmt, *mir.ChannelRecvStmt, *mir.ChannelCloseStmt, *mir.SpawnStmt, *mir.ChannelCreateStmt:
+	case *mir.CallStmt, *mir.ChannelSendStmt, *mir.ChannelRecvStmt, *mir.ChannelCloseStmt, *mir.SpawnStmt, *mir.ChannelCreateStmt, *mir.IndexSetStmt:
 		return true
 	default:
 		return false
 	}
+}
+
+// hasSideEffectWithLocals checks for side effects that depend on local metadata
+// (e.g., assignments to upvalue-aliased locals that update shared mutable state).
+func hasSideEffectWithLocals(stmt mir.Stmt, fn *mir.Function) bool {
+	if hasSideEffect(stmt) {
+		return true
+	}
+	if a, ok := stmt.(*mir.Assign); ok {
+		if int(a.Dest) < len(fn.Locals) && fn.Locals[int(a.Dest)].UpvalueAlias >= 0 {
+			return true
+		}
+	}
+	return false
 }

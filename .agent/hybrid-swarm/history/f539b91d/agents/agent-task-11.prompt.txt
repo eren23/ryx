@@ -1,0 +1,19 @@
+# Task: Smoke test graphics example
+
+Create `examples/graphics_hello.ryx` — a minimal ~50-line Ryx program that exercises the graphics API:
+
+- Call `gfx_init(640, 480, "Hello Graphics")` to set up window
+- Define a frame callback that:
+  - Clears screen with `COLOR_BLACK()`
+  - Draws a filled red rectangle: `gfx_set_color(COLOR_RED())`, `gfx_fill_rect(100, 100, 200, 150)`
+  - Draws a green circle: `gfx_set_color(COLOR_GREEN())`, `gfx_fill_circle(400, 300, 50)`
+  - Draws a blue line: `gfx_set_color(COLOR_BLUE())`, `gfx_line(0, 0, 640, 480)`
+  - Shows FPS text: `gfx_text(10, 10, "Hello Ryx Graphics!")`
+  - Responds to ESC to quit: `if gfx_key_pressed(KEY_ESCAPE()) { gfx_quit() }`
+- Call `gfx_run(callback)` to start the loop
+
+Use Ryx syntax (see `examples/hello.ryx` for reference): `fn`, `let`, closures, `if`.
+
+Acceptance: compiles and type-checks; window opens and renders when run.
+
+Target files: examples/graphics_hello.ryx

@@ -1,1 +1,1 @@
-All tests pass. The fix is already in place in the working t
+All tests pass. Here's what was added to `pkg/stdlib/graphic

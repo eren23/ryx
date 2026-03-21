@@ -930,6 +930,117 @@ func TestCodegenArrayAlloc(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Closure mutable capture: assignment inside if emits OpStoreUpvalue
+// ---------------------------------------------------------------------------
+
+func TestCodegenClosureMutCaptureEmitsStoreUpvalue(t *testing.T) {
+	// Build a closure function that captures variable x (upvalue 0) and
+	// assigns to it inside an if block. The codegen must emit
+	// OpStoreUpvalue (not OpStoreLocal) for that assignment.
+	//
+	// Equivalent to the inner closure in closure_mut_capture.ryx:
+	//   let inc = |_: Int| -> Int {
+	//       if true { x = x + 1; }; x
+	//   };
+	fn := &mir.Function{
+		Name:         "inc",
+		ReturnType:   types.TypInt,
+		Entry:        0,
+		UpvalueCount: 1, // captures x
+	}
+
+	// Local 0: the parameter (unused)
+	param := fn.NewLocal("_", types.TypInt)
+	fn.Params = []mir.LocalID{param}
+
+	// Local 1: x (initial load from upvalue 0)
+	xInit := fn.NewLocal("x", types.TypInt)
+	fn.Locals[int(xInit)].UpvalueAlias = 0
+
+	// Local 2: x+1 result
+	xPlusOne := fn.NewLocal("x", types.TypInt)
+	xPlusOne2 := xPlusOne // reuse ID
+	fn.Locals[int(xPlusOne2)].UpvalueAlias = 0
+
+	// Local 3: phi merge result for x
+	xMerge := fn.NewLocal("x", types.TypInt)
+	fn.Locals[int(xMerge)].UpvalueAlias = 0
+
+	// Blocks: entry -> if.then -> if.merge
+	entry := fn.NewBlock("entry")
+	thenB := fn.NewBlock("if.then")
+	mergeB := fn.NewBlock("if.merge")
+
+	// entry: load x from upvalue, branch on true
+	fn.Block(entry).Stmts = []mir.Stmt{
+		&mir.Assign{Dest: xInit, Src: &mir.Upvalue{Index: 0, Type: types.TypInt}, Type: types.TypInt},
+	}
+	fn.Block(entry).Term = &mir.Branch{
+		Cond: mir.BoolConst(true),
+		Then: thenB,
+		Else: mergeB,
+	}
+
+	// if.then: x = x + 1
+	fn.Block(thenB).Stmts = []mir.Stmt{
+		&mir.BinaryOpStmt{
+			Dest:  xPlusOne2,
+			Op:    "+",
+			Left:  fn.LocalRef(xInit),
+			Right: mir.IntConst(1),
+			Type:  types.TypInt,
+		},
+	}
+	fn.Block(thenB).Term = &mir.Goto{Target: mergeB}
+
+	// if.merge: phi(x) then return x
+	fn.Block(mergeB).Phis = []*mir.Phi{
+		{
+			Dest: xMerge,
+			Args: map[mir.BlockID]mir.Value{
+				entry: fn.LocalRef(xInit),
+				thenB: fn.LocalRef(xPlusOne2),
+			},
+			Type: types.TypInt,
+		},
+	}
+	fn.Block(mergeB).Term = &mir.Return{Value: fn.LocalRef(xMerge)}
+
+	fn.AddEdge(entry, thenB)
+	fn.AddEdge(entry, mergeB)
+	fn.AddEdge(thenB, mergeB)
+
+	prog := &mir.Program{Functions: []*mir.Function{fn}}
+	compiled, err := Generate(prog)
+	if err != nil {
+		t.Fatalf("codegen: %v", err)
+	}
+
+	disasm := Disassemble(compiled.Code, compiled.StringPool)
+
+	// Must emit STORE_UPVALUE for the mutable capture assignment.
+	if !strings.Contains(disasm, "STORE_UPVALUE") {
+		t.Errorf("expected STORE_UPVALUE in disasm (closure mutable capture must store to upvalue, not local):\n%s", disasm)
+	}
+
+	// Must also load from upvalue.
+	if !strings.Contains(disasm, "LOAD_UPVALUE") {
+		t.Errorf("expected LOAD_UPVALUE in disasm:\n%s", disasm)
+	}
+
+	// Should NOT emit STORE_LOCAL for slots that have UpvalueAlias >= 0.
+	// Count STORE_LOCAL vs STORE_UPVALUE to verify the alias is working.
+	storeLocalCount := strings.Count(disasm, "STORE_LOCAL")
+	storeUpvalueCount := strings.Count(disasm, "STORE_UPVALUE")
+	if storeUpvalueCount == 0 {
+		t.Errorf("expected at least one STORE_UPVALUE, got 0; STORE_LOCAL count: %d\ndisasm:\n%s",
+			storeLocalCount, disasm)
+	}
+	t.Logf("STORE_UPVALUE count: %d, STORE_LOCAL count: %d", storeUpvalueCount, storeLocalCount)
+	t.Logf("Disassembly:\n%s", disasm)
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers — build MIR functions
 // ---------------------------------------------------------------------------
 

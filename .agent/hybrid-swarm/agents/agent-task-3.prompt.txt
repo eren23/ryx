@@ -1,5 +1,26 @@
-# Task: Fix trait method self-parameter arity mismatch
+# Task: Create E2E test for mutable closure captures
 
-The traits.ryx E2E test fails with 'function arity mismatch: expected 1 parameters, found 0'. This happens in type checking when trait methods with 'self' parameter are resolved. The issue is likely in pkg/types/checker.go or pkg/types/traits.go where trait method signatures that include 'self' are being compared against impl method signatures. The 'self' parameter may be counted inconsistently between trait definition and impl block. Read the traits.ryx test program and the trait resolution code to identify where the arity mismatch occurs, then fix the parameter counting to be consistent between trait declarations and their implementations.
+Create end-to-end test files that verify mutable closure captures persist across invocations.
 
-Target files: pkg/types/checker.go, pkg/types/traits.go
+Create `tests/testdata/programs/closure_mut_capture.ryx`:
+- A program that creates a closure capturing `let mut x = 0`
+- The closure increments `x` inside an `if true { x = x + 1 }` block
+- The closure is called 3 times (via a loop or repeated invocation)
+- Each call prints the current value of `x`
+- Use patterns consistent with existing test programs in `tests/testdata/programs/`
+
+Create `tests/testdata/programs/closure_mut_capture.expected`:
+- Expected output: `1\n2\n3\n`
+
+Read existing test programs in `tests/testdata/programs/` for syntax patterns and conventions.
+Read `tests/integration/e2e_test.go` to understand how test programs are discovered and run.
+
+Acceptance: `go test ./tests/integration/ -run E2E -v` passes including the new test case.
+
+Target files: tests/testdata/programs/closure_mut_capture.ryx, tests/testdata/programs/closure_mut_capture.expected
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

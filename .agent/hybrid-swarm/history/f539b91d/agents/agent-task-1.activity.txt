@@ -1,0 +1,1 @@
+Done. Ebiten v2 (v2.9.9) is now in go.mod with all transitiv

@@ -1,0 +1,7 @@
+# Task: Add Ebiten v2 dependency
+
+Run `go get github.com/hajimehoshi/ebiten/v2@latest` to add the first external dependency. Verify `go build ./...` still passes after adding it. This is the foundation for all graphics work.
+
+Acceptance: go.mod lists ebiten/v2, go.sum updated, project compiles cleanly.
+
+Target files: go.mod, go.sum

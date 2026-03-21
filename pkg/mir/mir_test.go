@@ -659,6 +659,255 @@ func TestBreakContinue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: UpvalueAlias propagation through SSA assignments
+// ---------------------------------------------------------------------------
+
+func TestUpvalueAlias_AssignInsideConditional(t *testing.T) {
+	// Simulate a closure that captures mutable variable `x` and assigns to it
+	// inside an if block:
+	//   |x| { if true { x = 42; } x }
+	// After building, the closure function's new local for `x` created by the
+	// assignment should inherit UpvalueAlias from the capture local.
+
+	assignExpr := &hir.Assign{Name: "x", Value: typedInt("42")}
+	hir.SetExprType(assignExpr, types.TypUnit)
+
+	thenBlock := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: assignExpr}},
+		typedUnit(),
+		types.TypUnit,
+	)
+	ifExpr := typedIf(typedBool(true), thenBlock, nil, types.TypUnit)
+
+	lambdaBody := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: ifExpr}},
+		typedVar("x", types.TypInt),
+		types.TypInt,
+	)
+
+	lambdaType := &types.FnType{Params: nil, Return: types.TypInt}
+	lambda := &hir.Lambda{
+		Params:   nil,
+		Body:     lambdaBody,
+		Captures: []hir.Capture{{Name: "x", Type: types.TypInt}},
+	}
+	hir.SetExprType(lambda, lambdaType)
+
+	// Wrap in a function that defines `x` and creates the closure.
+	hirFn := &hir.Function{
+		Name:       "outer",
+		Params:     []hir.Param{},
+		ReturnType: types.TypUnit,
+		Body: &hir.Block{
+			Stmts: []hir.Stmt{
+				&hir.LetStmt{Name: "x", Type: types.TypInt, Value: typedInt("0"), Mutable: true},
+				&hir.LetStmt{Name: "f", Type: lambdaType, Value: lambda},
+			},
+			TrailingExpr: typedUnit(),
+		},
+	}
+
+	prog := &hir.Program{Functions: []*hir.Function{hirFn}}
+	mirProg := Build(prog)
+
+	// Find the generated closure function (not "outer").
+	var closureFn *Function
+	for _, fn := range mirProg.Functions {
+		if fn.Name != "outer" {
+			closureFn = fn
+			break
+		}
+	}
+	if closureFn == nil {
+		t.Fatal("expected a generated closure function")
+	}
+
+	t.Log(PrintFunction(closureFn))
+
+	// The capture local (upvalue 0) should have UpvalueAlias == 0.
+	// Any SSA local created by the `x = 42` assignment should also have
+	// UpvalueAlias == 0.
+	foundCapture := false
+	foundAssignedWithAlias := false
+	for _, local := range closureFn.Locals {
+		if local.Name == "x" && local.UpvalueAlias == 0 {
+			foundCapture = true
+		}
+	}
+	if !foundCapture {
+		t.Error("expected at least one local named 'x' with UpvalueAlias == 0 (the capture)")
+	}
+
+	// Count how many locals named 'x' have UpvalueAlias == 0.
+	// Should be >= 2: the initial capture load and the re-assignment.
+	aliasCount := 0
+	for _, local := range closureFn.Locals {
+		if local.Name == "x" && local.UpvalueAlias == 0 {
+			aliasCount++
+		}
+	}
+	if aliasCount < 2 {
+		foundAssignedWithAlias = false
+		t.Errorf("expected >= 2 locals named 'x' with UpvalueAlias==0 (capture + assignment), got %d", aliasCount)
+	} else {
+		foundAssignedWithAlias = true
+	}
+	_ = foundAssignedWithAlias
+}
+
+func TestUpvalueAlias_PhiPropagation(t *testing.T) {
+	// Closure captures mutable `x` and assigns in both branches:
+	//   |x| { if true { x = 1; } else { x = 2; } x }
+	// The phi at the merge point should inherit UpvalueAlias == 0.
+
+	assignThen := &hir.Assign{Name: "x", Value: typedInt("1")}
+	hir.SetExprType(assignThen, types.TypUnit)
+	assignElse := &hir.Assign{Name: "x", Value: typedInt("2")}
+	hir.SetExprType(assignElse, types.TypUnit)
+
+	thenBlock := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: assignThen}},
+		typedUnit(),
+		types.TypUnit,
+	)
+	elseBlock := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: assignElse}},
+		typedUnit(),
+		types.TypUnit,
+	)
+	ifExpr := typedIf(typedBool(true), thenBlock, elseBlock, types.TypUnit)
+
+	lambdaBody := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: ifExpr}},
+		typedVar("x", types.TypInt),
+		types.TypInt,
+	)
+
+	lambdaType := &types.FnType{Params: nil, Return: types.TypInt}
+	lambda := &hir.Lambda{
+		Params:   nil,
+		Body:     lambdaBody,
+		Captures: []hir.Capture{{Name: "x", Type: types.TypInt}},
+	}
+	hir.SetExprType(lambda, lambdaType)
+
+	hirFn := &hir.Function{
+		Name:       "outer_phi",
+		Params:     []hir.Param{},
+		ReturnType: types.TypUnit,
+		Body: &hir.Block{
+			Stmts: []hir.Stmt{
+				&hir.LetStmt{Name: "x", Type: types.TypInt, Value: typedInt("0"), Mutable: true},
+				&hir.LetStmt{Name: "f", Type: lambdaType, Value: lambda},
+			},
+			TrailingExpr: typedUnit(),
+		},
+	}
+
+	prog := &hir.Program{Functions: []*hir.Function{hirFn}}
+	mirProg := Build(prog)
+
+	var closureFn *Function
+	for _, fn := range mirProg.Functions {
+		if fn.Name != "outer_phi" {
+			closureFn = fn
+			break
+		}
+	}
+	if closureFn == nil {
+		t.Fatal("expected a generated closure function")
+	}
+
+	t.Log(PrintFunction(closureFn))
+
+	// Find the merge block (if.merge) and check that its phi dest has UpvalueAlias == 0.
+	var mergeBlk *BasicBlock
+	for _, blk := range closureFn.Blocks {
+		if blk.Label == "if.merge" {
+			mergeBlk = blk
+			break
+		}
+	}
+	if mergeBlk == nil {
+		t.Fatal("expected if.merge block in closure function")
+	}
+
+	// The merge block should have a phi for variable 'x'.
+	// Check that the phi dest local has UpvalueAlias == 0.
+	foundPhiWithAlias := false
+	for _, phi := range mergeBlk.Phis {
+		local := closureFn.Locals[int(phi.Dest)]
+		if local.Name == "x" && local.UpvalueAlias == 0 {
+			foundPhiWithAlias = true
+			break
+		}
+	}
+	if !foundPhiWithAlias {
+		// Also check stmts — trivial phis may be eliminated and replaced with assigns.
+		for _, s := range mergeBlk.Stmts {
+			d := s.DestLocal()
+			if d != NoLocal {
+				local := closureFn.Locals[int(d)]
+				if local.Name == "x" && local.UpvalueAlias == 0 {
+					foundPhiWithAlias = true
+					break
+				}
+			}
+		}
+	}
+	if !foundPhiWithAlias {
+		t.Error("expected phi dest local 'x' with UpvalueAlias==0 in if.merge block")
+		// Dump all locals for debugging.
+		for _, local := range closureFn.Locals {
+			t.Logf("  local %%%d name=%q UpvalueAlias=%d", local.ID, local.Name, local.UpvalueAlias)
+		}
+	}
+}
+
+func TestUpvalueAlias_NonCaptureUnaffected(t *testing.T) {
+	// A regular function (no closure) with mutable variable assignment.
+	// All locals should have UpvalueAlias == -1.
+	//   fn regular(c: Bool) -> Int { let mut x = 0; if c { x = 1; } x }
+
+	assignExpr := &hir.Assign{Name: "x", Value: typedInt("1")}
+	hir.SetExprType(assignExpr, types.TypUnit)
+
+	thenBlock := typedBlock(
+		[]hir.Stmt{&hir.ExprStmt{Expr: assignExpr}},
+		typedUnit(),
+		types.TypUnit,
+	)
+	ifExpr := typedIf(typedVar("c", types.TypBool), thenBlock, nil, types.TypUnit)
+
+	hirFn := &hir.Function{
+		Name:       "regular",
+		Params:     []hir.Param{{Name: "c", Type: types.TypBool}},
+		ReturnType: types.TypInt,
+		Body: &hir.Block{
+			Stmts: []hir.Stmt{
+				&hir.LetStmt{Name: "x", Type: types.TypInt, Value: typedInt("0"), Mutable: true},
+				&hir.ExprStmt{Expr: ifExpr},
+			},
+			TrailingExpr: typedVar("x", types.TypInt),
+		},
+	}
+
+	prog := &hir.Program{Functions: []*hir.Function{hirFn}}
+	mirProg := Build(prog)
+	fn := mirProg.Functions[0]
+
+	t.Log(PrintFunction(fn))
+
+	// Every local should have UpvalueAlias == -1 since this is not a closure.
+	for _, local := range fn.Locals {
+		if local.UpvalueAlias != -1 {
+			t.Errorf("local %%%d (%q) has UpvalueAlias=%d, expected -1 in non-closure function",
+				local.ID, local.Name, local.UpvalueAlias)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Test: every block has a terminator
 // ---------------------------------------------------------------------------
 

@@ -1,3 +1,1 @@
-**All tests pass. Here's the summary:**
-
-### Unit Tests (`./
+The test failure is pre-existing — `pkg/stdlib/graphics_test

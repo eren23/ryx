@@ -1,0 +1,26 @@
+# Task: Input builtins and key constants
+
+Create `pkg/stdlib/graphics_input.go` with input builtins and key constants:
+
+**Input functions:**
+- `gfx_key_pressed(key: Int) -> Bool`: wraps `ebiten.IsKeyPressed(ebiten.Key(key))`
+- `gfx_key_just_pressed(key: Int) -> Bool`: wraps `inpututil.IsKeyJustPressed(ebiten.Key(key))` (import `ebiten/v2/inpututil`)
+- `gfx_mouse_x() -> Int`: `ebiten.CursorPosition()` X
+- `gfx_mouse_y() -> Int`: `ebiten.CursorPosition()` Y
+- `gfx_mouse_pressed(button: Int) -> Bool`: `ebiten.IsMouseButtonPressed(ebiten.MouseButton(button))`
+
+**Key constants (zero-arg builtins returning Int):**
+- `KEY_UP` → `int(ebiten.KeyArrowUp)`
+- `KEY_DOWN` → `int(ebiten.KeyArrowDown)`
+- `KEY_LEFT` → `int(ebiten.KeyArrowLeft)`
+- `KEY_RIGHT` → `int(ebiten.KeyArrowRight)`
+- `KEY_SPACE` → `int(ebiten.KeySpace)`
+- `KEY_ESCAPE` → `int(ebiten.KeyEscape)`
+- `KEY_ENTER` → `int(ebiten.KeyEnter)`
+- `KEY_W`, `KEY_A`, `KEY_S`, `KEY_D` → respective ebiten.Key values
+
+Export a `RegisterInputBuiltins(r *Registry)` function.
+
+Acceptance: compiles, can detect keyboard/mouse input.
+
+Target files: pkg/stdlib/graphics_input.go

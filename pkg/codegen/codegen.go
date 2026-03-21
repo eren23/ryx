@@ -167,6 +167,28 @@ var callBuiltinNames = map[string]bool{
 	"map_new": true, "map_get": true, "map_set": true, "map_delete": true,
 	"map_contains": true, "map_len": true, "map_keys": true, "map_values": true,
 	"map_entries": true, "map_merge": true, "map_filter": true, "map_map": true,
+	// Graphics — window
+	"gfx_init": true, "gfx_run": true, "gfx_quit": true, "gfx_set_title": true,
+	// Graphics — draw
+	"gfx_clear": true, "gfx_set_color": true, "gfx_pixel": true,
+	"gfx_line": true, "gfx_rect": true, "gfx_fill_rect": true,
+	"gfx_circle": true, "gfx_fill_circle": true, "gfx_text": true,
+	// Graphics — colors
+	"gfx_rgb": true, "gfx_rgba": true,
+	"COLOR_BLACK": true, "COLOR_WHITE": true, "COLOR_RED": true,
+	"COLOR_GREEN": true, "COLOR_BLUE": true, "COLOR_YELLOW": true,
+	// Graphics — input
+	"gfx_key_pressed": true, "gfx_key_just_pressed": true,
+	"gfx_mouse_x": true, "gfx_mouse_y": true, "gfx_mouse_pressed": true,
+	"KEY_UP": true, "KEY_DOWN": true, "KEY_LEFT": true, "KEY_RIGHT": true,
+	"KEY_SPACE": true, "KEY_ESCAPE": true, "KEY_ENTER": true,
+	"KEY_W": true, "KEY_A": true, "KEY_S": true, "KEY_D": true,
+	"KEY_EQUAL": true, "KEY_MINUS": true,
+	// Graphics — bridge
+	"gfx_width": true, "gfx_height": true, "gfx_fps": true, "gfx_delta_time": true,
+	// Graphics — image
+	"gfx_load_image": true, "gfx_draw_image": true, "gfx_draw_image_scaled": true,
+	"gfx_image_width": true, "gfx_image_height": true,
 }
 
 // Generate compiles a MIR program to bytecode.
@@ -675,17 +697,16 @@ func (g *generator) emitTerminator(bb *mir.BasicBlock) error {
 // dest overwrites a value needed by a subsequent phi arg.
 func (g *generator) emitPhiMoves(src mir.BlockID, dst mir.BlockID) {
 	dstBlock := g.curFunc.Block(dst)
-	var slots []uint16
+	var dests []mir.LocalID
 	for _, phi := range dstBlock.Phis {
 		if val, ok := phi.Args[src]; ok {
 			g.emitValue(val)
-			slots = append(slots, g.localSlots[phi.Dest])
+			dests = append(dests, phi.Dest)
 		}
 	}
 	// Store in reverse order (LIFO) to match stack push order.
-	for i := len(slots) - 1; i >= 0; i-- {
-		EmitU16(&g.code, OpStoreLocal, slots[i])
-		g.adjustStack(-1)
+	for i := len(dests) - 1; i >= 0; i-- {
+		g.emitStoreLocal(dests[i])
 	}
 }
 
@@ -725,8 +746,12 @@ func (g *generator) emitJumpPlaceholder(op Opcode, target mir.BlockID) int {
 func (g *generator) emitValue(v mir.Value) {
 	switch val := v.(type) {
 	case *mir.Local:
-		slot := g.localSlots[val.ID]
-		EmitU16(&g.code, OpLoadLocal, slot)
+		if alias := g.curFunc.Locals[int(val.ID)].UpvalueAlias; alias >= 0 {
+			EmitU16(&g.code, OpLoadUpvalue, uint16(alias))
+		} else {
+			slot := g.localSlots[val.ID]
+			EmitU16(&g.code, OpLoadLocal, slot)
+		}
 		g.adjustStack(1)
 
 	case *mir.Const:
@@ -797,8 +822,12 @@ func (g *generator) emitValue(v mir.Value) {
 }
 
 func (g *generator) emitStoreLocal(dest mir.LocalID) {
-	slot := g.localSlots[dest]
-	EmitU16(&g.code, OpStoreLocal, slot)
+	if alias := g.curFunc.Locals[int(dest)].UpvalueAlias; alias >= 0 {
+		EmitU16(&g.code, OpStoreUpvalue, uint16(alias))
+	} else {
+		slot := g.localSlots[dest]
+		EmitU16(&g.code, OpStoreLocal, slot)
+	}
 	g.adjustStack(-1)
 }
 

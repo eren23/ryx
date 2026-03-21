@@ -1,1 +1,1 @@
-Both `game_of_life` and `graph_bfs` pass. The other failures
+All failures are from the pre-existing `callback.go` build e

@@ -1,0 +1,15 @@
+# Task: Integration verification
+
+Verify the complete graphics integration:
+
+1. Run `go build ./cmd/ryx` — must compile with Ebiten
+2. Run `go test ./... -short` — full test suite passes, no regressions
+3. Run `go test ./pkg/stdlib/ -run Graphics` — graphics unit tests pass
+4. Run `go test ./pkg/stdlib/ -run TestColor` — color packing tests pass
+5. Verify `go vet ./...` passes
+6. Check that all graphics examples (`examples/graphics_hello.ryx`, `examples/raycaster.ryx`) can be compiled/type-checked by the Ryx compiler (may need to pipe through compile-only mode if available)
+7. Verify no existing tests are broken
+
+Fix any issues found. Graphics runtime tests that need a display should be skipped with `-short` flag.
+
+Acceptance: all verification commands pass, no regressions.

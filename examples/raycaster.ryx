@@ -1,0 +1,489 @@
+// Raycaster Demo — Wolfenstein-style 3D raycaster in Ryx
+//
+// Uses the DDA (Digital Differential Analysis) algorithm to cast one ray
+// per screen column. Walls are colored by type and shaded by distance.
+//
+// Controls:
+//   W / Up Arrow    — move forward
+//   S / Down Arrow  — move backward
+//   A               — strafe left
+//   D               — strafe right
+//   Left Arrow      — rotate left
+//   Right Arrow     — rotate right
+//   ESC             — quit
+
+// ---------------------------------------------------------------------------
+// Color component extraction (packed RGBA: 0xRRGGBBAA)
+// ---------------------------------------------------------------------------
+
+fn color_r(c: Int) -> Int {
+    (c / 0x1000000) % 256
+}
+
+fn color_g(c: Int) -> Int {
+    (c / 0x10000) % 256
+}
+
+fn color_b(c: Int) -> Int {
+    (c / 0x100) % 256
+}
+
+// ---------------------------------------------------------------------------
+// Wall color by map tile type
+// ---------------------------------------------------------------------------
+
+fn wall_color(t: Int) -> Int {
+    if t == 1 { gfx_rgb(200, 50, 50) }
+    else if t == 2 { gfx_rgb(50, 180, 50) }
+    else if t == 3 { gfx_rgb(50, 80, 200) }
+    else if t == 4 { gfx_rgb(200, 200, 50) }
+    else { gfx_rgb(180, 180, 180) }
+}
+
+// Darken a color by halving its RGB channels (used for Y-side walls)
+fn darken(c: Int) -> Int {
+    gfx_rgba(color_r(c) / 2, color_g(c) / 2, color_b(c) / 2, 255)
+}
+
+// Multiply RGB channels by a shade factor [0.0 .. 1.0] for distance fog
+fn apply_shade(c: Int, shade: Float) -> Int {
+    let r = float_to_int(int_to_float(color_r(c)) * shade);
+    let g = float_to_int(int_to_float(color_g(c)) * shade);
+    let b = float_to_int(int_to_float(color_b(c)) * shade);
+    gfx_rgba(r, g, b, 255)
+}
+
+// 2D → 1D map lookup with bounds check (out-of-bounds = wall)
+fn tile_at(m: [Int], x: Int, y: Int) -> Int {
+    if x < 0 || x >= 16 || y < 0 || y >= 16 {
+        1
+    } else {
+        m[y * 16 + x]
+    }
+}
+
+// ===========================================================================
+// Main
+// ===========================================================================
+
+fn main() {
+    // Screen dimensions
+    let screen_w = 640;
+    let screen_h = 480;
+    let half_h = 240;
+
+    // Movement base speeds (units per second)
+    let base_move = 4.0;
+    let base_rot = 2.0;
+
+    // Player state — mutable, captured by frame closure
+    let mut pos_x = 8.5;
+    let mut pos_y = 8.5;
+    let mut dir_x = -1.0;   // facing north
+    let mut dir_y = 0.0;
+    let mut plane_x = 0.0;  // camera plane (FOV ~66°)
+    let mut plane_y = 0.66;
+
+    // 16×16 world map (0 = empty, 1-4 = wall types)
+    let world_map = [
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,2,2,0,0,0,0,0,0,0,3,3,0,0,1,
+        1,0,2,0,0,0,0,0,0,0,0,0,3,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,4,4,0,0,4,4,0,0,0,0,1,
+        1,0,0,0,0,4,0,0,0,0,4,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,4,0,0,0,0,4,0,0,0,0,1,
+        1,0,0,0,0,4,4,0,0,4,4,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,3,0,0,0,0,0,0,0,0,0,2,0,0,1,
+        1,0,3,3,0,0,0,0,0,0,0,2,2,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    ];
+
+    // Collectible items map (1 = item present, matches 16×16 world layout)
+    let mut items = [
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    ];
+    let mut score = 0;
+    let mut total_items = 7;
+
+    // Game state: 0 = start screen, 1 = playing, 2 = win screen
+    let mut game_state = 0;
+
+    // Initialize graphics
+    gfx_init(screen_w, screen_h, "Ryx Raycaster");
+
+    // -------------------------------------------------------------------
+    // Frame callback — called every frame by the engine
+    // -------------------------------------------------------------------
+    let frame = || {
+
+        // ESC quits from any screen
+        if gfx_key_pressed(KEY_ESCAPE()) {
+            gfx_quit()
+        };
+
+        if game_state == 0 {
+            // ===========================================================
+            // Start screen
+            // ===========================================================
+            gfx_set_color(gfx_rgb(0, 0, 0));
+            gfx_fill_rect(0, 0, screen_w, screen_h);
+
+            gfx_set_color(gfx_rgb(255, 255, 255));
+            gfx_text(250, 200, "RYX RAYCASTER");
+
+            gfx_set_color(gfx_rgb(180, 180, 180));
+            gfx_text(220, 260, "Press ENTER to start");
+
+            if gfx_key_just_pressed(KEY_ENTER()) {
+                game_state = 1
+            }
+
+        } else if game_state == 1 {
+
+        // ===============================================================
+        // Delta time — frame-rate-independent movement
+        // ===============================================================
+        let raw_dt = gfx_delta_time();
+        let dt = if raw_dt <= 0.0 { 1.0 / 60.0 } else { raw_dt };
+        let move_speed = base_move * dt;
+        let rot_speed = base_rot * dt;
+
+        // ===============================================================
+        // Input handling
+        // ===============================================================
+
+        // -- Movement (with per-axis collision detection) ----------------
+
+        // Forward (W / Up)
+        if gfx_key_pressed(KEY_W()) || gfx_key_pressed(KEY_UP()) {
+            let nx = pos_x + dir_x * move_speed;
+            let ny = pos_y + dir_y * move_speed;
+            if tile_at(world_map, float_to_int(floor(nx)), float_to_int(floor(pos_y))) == 0 {
+                pos_x = nx
+            };
+            if tile_at(world_map, float_to_int(floor(pos_x)), float_to_int(floor(ny))) == 0 {
+                pos_y = ny
+            }
+        };
+
+        // Backward (S / Down)
+        if gfx_key_pressed(KEY_S()) || gfx_key_pressed(KEY_DOWN()) {
+            let nx = pos_x - dir_x * move_speed;
+            let ny = pos_y - dir_y * move_speed;
+            if tile_at(world_map, float_to_int(floor(nx)), float_to_int(floor(pos_y))) == 0 {
+                pos_x = nx
+            };
+            if tile_at(world_map, float_to_int(floor(pos_x)), float_to_int(floor(ny))) == 0 {
+                pos_y = ny
+            }
+        };
+
+        // Strafe left (A)
+        if gfx_key_pressed(KEY_A()) {
+            let nx = pos_x - plane_x * move_speed;
+            let ny = pos_y - plane_y * move_speed;
+            if tile_at(world_map, float_to_int(floor(nx)), float_to_int(floor(pos_y))) == 0 {
+                pos_x = nx
+            };
+            if tile_at(world_map, float_to_int(floor(pos_x)), float_to_int(floor(ny))) == 0 {
+                pos_y = ny
+            }
+        };
+
+        // Strafe right (D)
+        if gfx_key_pressed(KEY_D()) {
+            let nx = pos_x + plane_x * move_speed;
+            let ny = pos_y + plane_y * move_speed;
+            if tile_at(world_map, float_to_int(floor(nx)), float_to_int(floor(pos_y))) == 0 {
+                pos_x = nx
+            };
+            if tile_at(world_map, float_to_int(floor(pos_x)), float_to_int(floor(ny))) == 0 {
+                pos_y = ny
+            }
+        };
+
+        // -- Rotation ---------------------------------------------------
+
+        // Rotate left (Left arrow)
+        if gfx_key_pressed(KEY_LEFT()) {
+            let c = cos(rot_speed);
+            let s = sin(rot_speed);
+            let old_dx = dir_x;
+            let old_px = plane_x;
+            dir_x = dir_x * c - dir_y * s;
+            dir_y = old_dx * s + dir_y * c;
+            plane_x = plane_x * c - plane_y * s;
+            plane_y = old_px * s + plane_y * c
+        };
+
+        // Rotate right (Right arrow)
+        if gfx_key_pressed(KEY_RIGHT()) {
+            let c = cos(0.0 - rot_speed);
+            let s = sin(0.0 - rot_speed);
+            let old_dx = dir_x;
+            let old_px = plane_x;
+            dir_x = dir_x * c - dir_y * s;
+            dir_y = old_dx * s + dir_y * c;
+            plane_x = plane_x * c - plane_y * s;
+            plane_y = old_px * s + plane_y * c
+        };
+
+        // ===============================================================
+        // Collectible item pickup
+        // ===============================================================
+        let item_idx = float_to_int(floor(pos_y)) * 16 + float_to_int(floor(pos_x));
+        if items[item_idx] == 1 {
+            items[item_idx] = 0;
+            score = score + 1
+        };
+
+        // ===============================================================
+        // Draw ceiling and floor
+        // ===============================================================
+        gfx_set_color(gfx_rgb(40, 40, 40));
+        gfx_fill_rect(0, 0, screen_w, half_h);
+        gfx_set_color(gfx_rgb(90, 90, 90));
+        gfx_fill_rect(0, half_h, screen_w, half_h);
+
+        // ===============================================================
+        // DDA Raycasting — one ray per screen column
+        // ===============================================================
+        let mut x = 0;
+        while x < screen_w {
+            // Camera-space X coordinate: -1.0 (left) to +1.0 (right)
+            let camera_x = 2.0 * int_to_float(x) / int_to_float(screen_w) - 1.0;
+
+            // Ray direction
+            let ray_dx = dir_x + plane_x * camera_x;
+            let ray_dy = dir_y + plane_y * camera_x;
+
+            // Safe denominators for perp distance (must match dd_* guards: dividing by
+            // exact 0.0 when the ray is axis-aligned causes runtime division-by-zero).
+            let rdx = if abs(ray_dx) < 0.00001 {
+                if ray_dx < 0.0 { 0.0 - 0.00001 } else { 0.00001 }
+            } else {
+                ray_dx
+            };
+            let rdy = if abs(ray_dy) < 0.00001 {
+                if ray_dy < 0.0 { 0.0 - 0.00001 } else { 0.00001 }
+            } else {
+                ray_dy
+            };
+
+            // Current map cell (integer coordinates)
+            let mut mx = float_to_int(floor(pos_x));
+            let mut my = float_to_int(floor(pos_y));
+
+            // Delta distances — how far along the ray to cross one cell
+            let dd_x = if abs(ray_dx) < 0.00001 { 1000000.0 }
+                        else { abs(1.0 / ray_dx) };
+            let dd_y = if abs(ray_dy) < 0.00001 { 1000000.0 }
+                        else { abs(1.0 / ray_dy) };
+
+            // Step direction and initial side distances
+            let mut step_x = 0;
+            let mut step_y = 0;
+            let mut sd_x = 0.0;
+            let mut sd_y = 0.0;
+
+            if ray_dx < 0.0 {
+                step_x = -1;
+                sd_x = (pos_x - int_to_float(mx)) * dd_x
+            } else {
+                step_x = 1;
+                sd_x = (int_to_float(mx) + 1.0 - pos_x) * dd_x
+            };
+
+            if ray_dy < 0.0 {
+                step_y = -1;
+                sd_y = (pos_y - int_to_float(my)) * dd_y
+            } else {
+                step_y = 1;
+                sd_y = (int_to_float(my) + 1.0 - pos_y) * dd_y
+            };
+
+            // DDA loop — step through cells until we hit a wall
+            let mut side = 0;
+            let mut hit = false;
+            while !hit {
+                if sd_x < sd_y {
+                    sd_x = sd_x + dd_x;
+                    mx = mx + step_x;
+                    side = 0
+                } else {
+                    sd_y = sd_y + dd_y;
+                    my = my + step_y;
+                    side = 1
+                };
+                if tile_at(world_map, mx, my) > 0 {
+                    hit = true
+                }
+            };
+
+            // Perpendicular wall distance (avoids fisheye distortion)
+            let perp = if side == 0 {
+                (int_to_float(mx) - pos_x + int_to_float(1 - step_x) / 2.0) / rdx
+            } else {
+                (int_to_float(my) - pos_y + int_to_float(1 - step_y) / 2.0) / rdy
+            };
+
+            // Guard against division artifacts
+            let dist = if perp > 0.001 { perp } else { 0.001 };
+
+            // Wall strip height on screen
+            let line_h = float_to_int(int_to_float(screen_h) / dist);
+            let draw_start = max(0, half_h - line_h / 2);
+            let draw_end = min(screen_h - 1, half_h + line_h / 2);
+
+            // Color: by wall type, darken Y-side hits, apply distance fog
+            let wt = tile_at(world_map, mx, my);
+            let mut color = wall_color(wt);
+            if side == 1 {
+                color = darken(color)
+            };
+            let shade = clamp(1.0 - dist / 16.0, 0.2, 1.0);
+            color = apply_shade(color, shade);
+
+            // Draw the vertical wall strip
+            gfx_set_color(color);
+            gfx_line(x, draw_start, x, draw_end);
+
+            x = x + 1
+        };
+
+        // ===============================================================
+        // Minimap — top-left corner, 4 px per tile
+        // ===============================================================
+
+        // Semi-transparent background
+        gfx_set_color(gfx_rgba(0, 0, 0, 180));
+        gfx_fill_rect(0, 0, 68, 68);
+
+        // Draw wall tiles
+        let mut ty = 0;
+        while ty < 16 {
+            let mut tx = 0;
+            while tx < 16 {
+                let tile = tile_at(world_map, tx, ty);
+                if tile > 0 {
+                    let tc = wall_color(tile);
+                    gfx_set_color(gfx_rgba(color_r(tc), color_g(tc), color_b(tc), 200));
+                    gfx_fill_rect(tx * 4 + 2, ty * 4 + 2, 4, 4)
+                };
+                tx = tx + 1
+            };
+            ty = ty + 1
+        };
+
+        // Draw collectible items as cyan dots
+        let mut iy = 0;
+        while iy < 16 {
+            let mut ix = 0;
+            while ix < 16 {
+                if items[iy * 16 + ix] == 1 {
+                    gfx_set_color(gfx_rgb(0, 255, 255));
+                    gfx_fill_rect(ix * 4 + 3, iy * 4 + 3, 2, 2)
+                };
+                ix = ix + 1
+            };
+            iy = iy + 1
+        };
+
+        // Player position dot
+        gfx_set_color(COLOR_RED());
+        let px = float_to_int(pos_x * 4.0) + 2 - 1;
+        let py = float_to_int(pos_y * 4.0) + 2 - 1;
+        gfx_fill_rect(px, py, 3, 3);
+
+        // Player direction indicator
+        gfx_set_color(COLOR_YELLOW());
+        let from_x = float_to_int(pos_x * 4.0) + 2;
+        let from_y = float_to_int(pos_y * 4.0) + 2;
+        let to_x = float_to_int((pos_x + dir_x * 2.0) * 4.0) + 2;
+        let to_y = float_to_int((pos_y + dir_y * 2.0) * 4.0) + 2;
+        gfx_line(from_x, from_y, to_x, to_y);
+
+        // ===============================================================
+        // HUD overlay — score, items remaining, FPS
+        // ===============================================================
+
+        // Semi-transparent bar across the top
+        gfx_set_color(gfx_rgba(0, 0, 0, 160));
+        gfx_fill_rect(0, 0, screen_w, 30);
+
+        // Score (left side)
+        gfx_set_color(gfx_rgb(255, 255, 255));
+        gfx_text(10, 8, "Score: " ++ int_to_string(score));
+
+        // Items remaining (center-left)
+        let remaining = total_items - score;
+        gfx_text(200, 8, "Items: " ++ int_to_string(remaining) ++ "/" ++ int_to_string(total_items));
+
+        // FPS (right-aligned)
+        gfx_text(screen_w - 80, 8, "FPS: " ++ int_to_string(float_to_int(gfx_fps())));
+
+        // Win condition — all items collected
+        if score == total_items {
+            game_state = 2
+        }
+
+        } else {
+            // ===========================================================
+            // Win screen
+            // ===========================================================
+            gfx_set_color(gfx_rgb(0, 0, 0));
+            gfx_fill_rect(0, 0, screen_w, screen_h);
+
+            gfx_set_color(gfx_rgb(255, 215, 0));
+            gfx_text(180, 180, "ALL ITEMS COLLECTED!");
+
+            gfx_set_color(gfx_rgb(255, 255, 255));
+            gfx_text(260, 230, "Score: " ++ int_to_string(score));
+
+            gfx_set_color(gfx_rgb(180, 180, 180));
+            gfx_text(190, 290, "Press ENTER to restart");
+
+            if gfx_key_just_pressed(KEY_ENTER()) {
+                pos_x = 8.5;
+                pos_y = 8.5;
+                dir_x = -1.0;
+                dir_y = 0.0;
+                plane_x = 0.0;
+                plane_y = 0.66;
+                score = 0;
+                items[17] = 1;
+                items[39] = 1;
+                items[61] = 1;
+                items[78] = 1;
+                items[115] = 1;
+                items[124] = 1;
+                items[231] = 1;
+                game_state = 0
+            }
+        }
+    };
+
+    // Start the game loop
+    gfx_run(frame)
+}

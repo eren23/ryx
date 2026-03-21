@@ -1,0 +1,13 @@
+# Task: Review graphics implementation quality
+
+Review the complete graphics library implementation for:
+
+1. **API consistency**: all builtins follow the same argument extraction and error handling patterns as existing stdlib functions
+2. **Thread safety**: GraphicsState singleton access is safe (Ebiten calls Update/Draw from same goroutine, but verify)
+3. **Memory**: draw queue is cleared every frame, no leaks
+4. **Error handling**: graceful handling of missing gfx_init before gfx_run, division by zero in raycaster, out-of-bounds map access
+5. **Code organization**: proper separation between bridge, builtins, and registration
+6. **Completeness**: all ~30 builtins are registered in both codegen.go and core.go
+7. **Raycaster correctness**: DDA algorithm matches the spec, no fisheye distortion, correct wall coloring
+
+Provide specific, actionable feedback with file:line references.

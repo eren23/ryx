@@ -1,0 +1,12 @@
+{
+  "is_git_repo": true,
+  "original_branch": "main",
+  "swarm_branch": "attoswarm/f539b91d",
+  "stash_ref": "attoswarm-f539b91d-pre-run",
+  "pre_run_head": "74133c717f6b71541107658f3dc6dde5f6c5431b",
+  "base_ref": "main",
+  "base_commit": "74133c717f6b71541107658f3dc6dde5f6c5431b",
+  "result_ref": "",
+  "result_commit": "",
+  "finalization_mode": ""
+}

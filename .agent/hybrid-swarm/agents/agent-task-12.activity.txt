@@ -1,1 +1,1 @@
-All three target files are already fully implemented and ver
+All tests pass. Here's a summary of the changes to `examples

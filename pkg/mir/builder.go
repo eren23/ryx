@@ -3,6 +3,7 @@ package mir
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/ryx-lang/ryx/pkg/hir"
 	"github.com/ryx-lang/ryx/pkg/types"
@@ -203,6 +204,28 @@ func (b *builder) readVariableRecursive(name string, block BlockID) Value {
 			for _, pred := range preds {
 				phi.Args[pred] = b.readVariable(name, pred)
 			}
+			// Propagate UpvalueAlias if all non-trivial phi operands agree on the same alias.
+			commonAlias := -1
+			aliasConsistent := true
+			for _, arg := range phi.Args {
+				if ref, ok := arg.(*Local); ok {
+					if ref.ID == dest {
+						continue // skip self-reference
+					}
+					a := b.fn.Locals[int(ref.ID)].UpvalueAlias
+					if a >= 0 {
+						if commonAlias == -1 {
+							commonAlias = a
+						} else if commonAlias != a {
+							aliasConsistent = false
+							break
+						}
+					}
+				}
+			}
+			if aliasConsistent && commonAlias >= 0 {
+				b.fn.Locals[int(dest)].UpvalueAlias = commonAlias
+			}
 			val = b.tryRemoveTrivialPhi(phi, block)
 		}
 	}
@@ -313,7 +336,29 @@ func isBuiltinName(name string) bool {
 		"path_join", "path_dirname", "path_basename", "path_extension", "file_size",
 		"map_new", "map_get", "map_set", "map_delete", "map_contains",
 		"map_len", "map_keys", "map_values", "map_entries",
-		"map_merge", "map_filter", "map_map":
+		"map_merge", "map_filter", "map_map",
+		// Graphics — window
+		"gfx_init", "gfx_run", "gfx_quit", "gfx_set_title",
+		// Graphics — draw
+		"gfx_clear", "gfx_set_color", "gfx_pixel",
+		"gfx_line", "gfx_rect", "gfx_fill_rect",
+		"gfx_circle", "gfx_fill_circle", "gfx_text",
+		// Graphics — colors
+		"gfx_rgb", "gfx_rgba",
+		"COLOR_BLACK", "COLOR_WHITE", "COLOR_RED",
+		"COLOR_GREEN", "COLOR_BLUE", "COLOR_YELLOW",
+		// Graphics — input
+		"gfx_key_pressed", "gfx_key_just_pressed",
+		"gfx_mouse_x", "gfx_mouse_y", "gfx_mouse_pressed",
+		"KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT",
+		"KEY_SPACE", "KEY_ESCAPE", "KEY_ENTER",
+		"KEY_W", "KEY_A", "KEY_S", "KEY_D",
+		"KEY_EQUAL", "KEY_MINUS",
+		// Graphics — bridge
+		"gfx_width", "gfx_height", "gfx_fps", "gfx_delta_time",
+		// Graphics — image
+		"gfx_load_image", "gfx_draw_image", "gfx_draw_image_scaled",
+		"gfx_image_width", "gfx_image_height":
 		return true
 	}
 	return false
@@ -378,7 +423,9 @@ func (b *builder) lowerStmt(stmt hir.Stmt) {
 func (b *builder) lowerExpr(expr hir.Expr) Value {
 	switch e := expr.(type) {
 	case *hir.IntLit:
-		v, _ := strconv.ParseInt(e.Value, 10, 64)
+		// Use base 0 to auto-detect hex (0x), octal (0o), binary (0b) literals.
+		cleaned := strings.ReplaceAll(e.Value, "_", "")
+		v, _ := strconv.ParseInt(cleaned, 0, 64)
 		return IntConst(v)
 
 	case *hir.FloatLit:
@@ -488,8 +535,17 @@ func (b *builder) lowerExpr(expr hir.Expr) Value {
 		return b.fn.LocalRef(dest)
 
 	case *hir.Assign: // [CLAUDE-FIX] Handle variable assignment
+		// Look up current definition before creating new local, to propagate UpvalueAlias.
+		curDef := b.readVariable(e.Name, b.curBlock)
 		val := b.lowerExpr(e.Value)
 		local := b.fn.NewLocal(e.Name, e.Value.ExprType())
+		// Propagate UpvalueAlias from the current definition so mutations
+		// inside closures go through the upvalue cell, not ephemeral stack slots.
+		if ref, ok := curDef.(*Local); ok {
+			if alias := b.fn.Locals[int(ref.ID)].UpvalueAlias; alias >= 0 {
+				b.fn.Locals[int(local)].UpvalueAlias = alias
+			}
+		}
 		b.emit(&Assign{Dest: local, Src: val, Type: e.Value.ExprType()})
 		b.writeVariable(e.Name, b.curBlock, local)
 		return UnitConst()
@@ -925,6 +981,7 @@ func (b *builder) buildLambdaFunction(name string, lambda *hir.Lambda) *Function
 	// Load captured variables from upvalues into locals.
 	for i, cap := range lambda.Captures {
 		local := fn.NewLocal(cap.Name, cap.Type)
+		fn.Locals[int(local)].UpvalueAlias = i
 		lb.emit(&Assign{
 			Dest: local,
 			Src:  &Upvalue{Index: i, Type: cap.Type},

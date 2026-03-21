@@ -1,1 +1,2 @@
-All 24 programs compile successfully. The closure/lambda cod
+All 13 tests pass, including the 3 new UpvalueAlias tests.
+

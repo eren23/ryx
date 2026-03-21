@@ -1,5 +1,25 @@
-# Task: Fix array index out of bounds in VM execution
+# Task: Add draw image commands to graphics_image.go
 
-E2E tests game_of_life.ryx and graph_bfs.ryx fail with 'runtime error: index 25 out of bounds (length 25)' and 'index 10 out of bounds (length 10)'. These are off-by-one errors where the programs use 0-based indexing but are accessing index N for an array of length N. This could be in how range expressions (0..N) are compiled - the upper bound may be inclusive when it should be exclusive, causing iteration to go one past the end. Check how 'for i in 0..N' is desugared in HIR (pkg/hir/lower.go) - specifically whether the range end bound is exclusive (..) vs inclusive (..=). If the desugared while loop uses <= instead of < for '..' ranges, fix it to use strict less-than comparison.
+Extend `pkg/stdlib/graphics_image.go` with DrawImageCmd and draw builtins.
 
-Target files: pkg/hir/lower.go
+Add to the existing file:
+1. `DrawImageCmd` struct: `Handle int`, `X int`, `Y int`, `ScaleX float64`, `ScaleY float64`. Must implement the `DrawCommand` interface.
+2. `DrawImageCmd.Execute(screen *ebiten.Image)`: look up image from `imageStore` by Handle, create `ebiten.DrawImageOptions`, apply `GeoM.Scale(ScaleX, ScaleY)` if not (1.0, 1.0), apply `GeoM.Translate(float64(X), float64(Y))`, call `screen.DrawImage(img, opts)`. Handle invalid handles gracefully (skip draw).
+3. `GfxDrawImage(args []vm.Value, heap *vm.Heap) vm.Value`: extracts (handle: Int, x: Int, y: Int), creates `DrawImageCmd{ScaleX: 1.0, ScaleY: 1.0}`, appends to draw queue via `AppendCommand`.
+4. `GfxDrawImageScaled(args []vm.Value, heap *vm.Heap) vm.Value`: extracts (handle: Int, x: Int, y: Int, sx: Float, sy: Float), creates `DrawImageCmd` with given scale.
+5. Add both to `RegisterImageBuiltins`.
+
+Read for context:
+- `pkg/stdlib/graphics_bridge.go` (DrawCommand interface, AppendCommand function)
+- `pkg/stdlib/graphics_draw.go` (existing DrawCommand implementations like FillRectCmd)
+- `pkg/stdlib/graphics_image.go` (the file created in task-5)
+
+Acceptance: `go build ./pkg/stdlib/...` compiles.
+
+Target files: pkg/stdlib/graphics_image.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

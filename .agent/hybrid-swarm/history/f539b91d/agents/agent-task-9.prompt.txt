@@ -1,0 +1,9 @@
+# Task: Register graphics builtins in stdlib core
+
+Modify `pkg/stdlib/core.go` to register all graphics builtins. Add a `RegisterGraphics(r *Registry)` function (or call individual `RegisterColorBuiltins`, `RegisterWindowBuiltins`, `RegisterDrawBuiltins`, `RegisterInputBuiltins` etc.) and call it from `RegisterAll()` (around line 292-425).
+
+The registration must include every builtin added in tasks 3, 5, 6, 7, and the screen info builtins from task 4. Follow the existing pattern in `RegisterAll()` where `r.Register(name, fn)` is called for each builtin.
+
+Acceptance: `go build ./...` passes, all graphics builtins are available at runtime.
+
+Target files: pkg/stdlib/core.go

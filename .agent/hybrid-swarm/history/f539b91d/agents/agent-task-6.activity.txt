@@ -1,0 +1,1 @@
+Compiles cleanly. Created `pkg/stdlib/graphics_draw.go` with

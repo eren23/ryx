@@ -130,6 +130,28 @@ var builtinFunctions = []string{
 	"map_merge", "map_filter", "map_map",
 	// Hash / comparison (trait methods)
 	"eq", "neq", "compare", "to_string", "default", "clone", "hash",
+	// Graphics — window
+	"gfx_init", "gfx_run", "gfx_quit", "gfx_set_title",
+	// Graphics — draw
+	"gfx_clear", "gfx_set_color", "gfx_pixel",
+	"gfx_line", "gfx_rect", "gfx_fill_rect",
+	"gfx_circle", "gfx_fill_circle", "gfx_text",
+	// Graphics — colors
+	"gfx_rgb", "gfx_rgba",
+	"COLOR_BLACK", "COLOR_WHITE", "COLOR_RED",
+	"COLOR_GREEN", "COLOR_BLUE", "COLOR_YELLOW",
+	// Graphics — input
+	"gfx_key_pressed", "gfx_key_just_pressed",
+	"gfx_mouse_x", "gfx_mouse_y", "gfx_mouse_pressed",
+	"KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT",
+	"KEY_SPACE", "KEY_ESCAPE", "KEY_ENTER",
+	"KEY_W", "KEY_A", "KEY_S", "KEY_D",
+	"KEY_EQUAL", "KEY_MINUS",
+	// Graphics — bridge
+	"gfx_width", "gfx_height", "gfx_fps", "gfx_delta_time",
+	// Graphics — image
+	"gfx_load_image", "gfx_draw_image", "gfx_draw_image_scaled",
+	"gfx_image_width", "gfx_image_height",
 }
 
 // builtinTypes lists built-in type names.

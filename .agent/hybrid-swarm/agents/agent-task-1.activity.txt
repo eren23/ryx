@@ -1,3 +1,1 @@
-All core tests pass. Here's a summary of the changes:
-
-**Roo
+Both compile and tests pass. Here's a summary of the changes

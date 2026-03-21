@@ -1,0 +1,7 @@
+# Task: Fix executeProgram builtin wiring bug
+
+Fix the bug in `cmd/ryx/main.go:610-624` where `executeProgram()` creates a VM via `vm.NewVM(compiled)` but never populates `machine.Builtins` or calls `stdlib.RegisterAll()`. Look at how the REPL (`pkg/repl/repl.go`) or test harness initializes the VM for the correct pattern — create a `stdlib.Registry`, call `RegisterAll(registry)`, and assign it to `machine.Builtins` before `machine.Run()`.
+
+Acceptance: `./ryx run examples/hello.ryx` prints output (builtins work from CLI).
+
+Target files: cmd/ryx/main.go

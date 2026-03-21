@@ -1,5 +1,30 @@
-# Task: Fix hash_map and json_parser value computation returning zeros
+# Task: Register all new builtins in core.go and codegen.go
 
-E2E tests hash_map.ryx and json_parser.ryx produce all zeros instead of expected computed values. The programs compile and run without crashing but produce wrong results. This likely indicates that struct field access (FIELD_GET/FIELD_SET) or enum variant destructuring is not working correctly, returning default zero values instead of actual stored values. Alternatively, variable mutation (let mut + reassignment) may not be working properly in the VM. Read both .ryx test files to understand what operations they perform, then trace the issue - possibly in how STORE_LOCAL/LOAD_LOCAL handles mutable variables, or how struct/enum field access works in the VM dispatch loop.
+Register all new builtins from tasks 4-6 in the central registration and codegen files.
 
-Target files: pkg/vm/vm.go, pkg/vm/value.go, pkg/vm/heap.go
+Modify `pkg/stdlib/core.go`:
+- In `RegisterGraphics()` (or equivalent registration function), add call to `RegisterImageBuiltins(r)`
+- Ensure `GfxDeltaTime` is registered as `gfx_delta_time` builtin (either in `RegisterBridgeBuiltins` or wherever bridge builtins are registered)
+
+Modify `pkg/codegen/codegen.go`:
+- Add ALL new builtin names to `callBuiltinNames` (or equivalent map/slice):
+  - `"gfx_delta_time"`
+  - `"gfx_load_image"`
+  - `"gfx_draw_image"`
+  - `"gfx_draw_image_scaled"`
+  - `"gfx_image_width"`
+  - `"gfx_image_height"`
+
+Read for context:
+- `pkg/stdlib/core.go` (existing registration patterns, RegisterGraphics, RegisterBridgeBuiltins)
+- `pkg/codegen/codegen.go` (callBuiltinNames location and format)
+
+Acceptance: `go build ./...` compiles with all new builtins registered.
+
+Target files: pkg/stdlib/core.go, pkg/codegen/codegen.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

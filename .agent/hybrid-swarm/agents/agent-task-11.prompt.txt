@@ -1,3 +1,21 @@
-# Task: Final full test suite validation
+# Task: Add HUD overlay and score display to raycaster
 
-Run the complete test suite one final time to confirm all tests pass: go test ./... . Verify all 24 E2E programs pass, all unit tests pass across all packages (lexer, parser, resolver, types, hir, mir, optimize, codegen, vm, gc, stdlib, diagnostic, repl), and integration concurrency tests pass. Report final pass/fail counts. If everything passes, the task is complete.
+Add a HUD overlay to `examples/raycaster.ryx`.
+
+Changes:
+1. Draw semi-transparent HUD bar at top of screen: `gfx_set_color(gfx_rgba(0, 0, 0, 160))`, `gfx_fill_rect(0, 0, screen_w, 30)`.
+2. Display score text: `gfx_set_color(gfx_rgb(255, 255, 255))`, `gfx_text(10, 8, "Score: " ++ int_to_string(score))`.
+3. Display items remaining: compute remaining count from items array, show `"Items: " ++ int_to_string(remaining) ++ "/" ++ int_to_string(total_items)`.
+4. Move existing FPS display into the HUD bar area (right-aligned).
+
+Read `examples/raycaster.ryx` for current rendering order, FPS display location, and available text/drawing functions.
+
+Acceptance: HUD renders at top with score, items, and FPS.
+
+Target files: examples/raycaster.ryx
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

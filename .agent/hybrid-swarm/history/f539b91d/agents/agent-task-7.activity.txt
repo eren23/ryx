@@ -1,0 +1,3 @@
+Compiles cleanly. The file creates:
+
+- **5 input functions**

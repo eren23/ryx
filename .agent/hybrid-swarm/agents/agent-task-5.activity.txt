@@ -1,1 +1,1 @@
-All tests pass. The fixes for the VM stack underflow panics 
+All failures are caused by the pre-existing `pkg/vm/callback
