@@ -1,0 +1,33 @@
+# Task: Integration tests and codegen verification
+
+Add integration and codegen tests verifying all new features work together.
+
+Modify `tests/integration/e2e_test.go`:
+- Add compile-only test for `examples/raycaster.ryx` (headless, no display)
+- Add compile-only test for `examples/image_viewer.ryx` (headless, no display)
+- Verify the `closure_mut_capture` test case runs and produces expected output
+
+Modify `pkg/codegen/codegen_test.go`:
+- Add test: compile a closure with a mutable capture that is assigned inside an `if` block
+- Verify that `OpStoreUpvalue` is emitted for the assignment (NOT `OpStoreLocal`)
+- This validates the end-to-end fix from MIR through codegen
+
+Read for context:
+- `tests/integration/e2e_test.go` (existing compile/run test patterns)
+- `pkg/codegen/codegen_test.go` (existing codegen test patterns, disassembly helpers)
+
+Run full test suite: `go test ./...`
+
+Acceptance: `go test ./...` all green, no regressions.
+
+Target files: tests/integration/e2e_test.go, pkg/codegen/codegen_test.go
+
+## Related Tests
+These test files cover your target files — run them to verify:
+- pkg/codegen/codegen_test.go
+- tests/integration/e2e_test.go
+
+Verify: go test ./... pkg/codegen/codegen_test.go tests/integration/e2e_test.go
+
+## Context from Previous Runs
+No relevant learnings found for this project.

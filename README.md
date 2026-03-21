@@ -1,6 +1,6 @@
 # Ryx
 
-Ryx is a statically typed, expression-oriented programming language with algebraic data types, pattern matching, traits, closures, and lightweight concurrency via fibers and channels. The compiler and runtime are implemented in pure Go with zero external dependencies.
+Ryx is a statically typed, expression-oriented programming language with algebraic data types, pattern matching, traits, closures, and lightweight concurrency via fibers and channels. The compiler and runtime are implemented in Go. Graphics programs use Ebiten v2 for windowed rendering.
 
 Full documentation is intended to live in the GitHub Pages site:
 
@@ -68,6 +68,17 @@ pkg/          Compiler, runtime, and standard library packages
 tests/        Integration and benchmark suites
 docs/         mdBook sources and generated GitHub Pages site
 ```
+
+## Examples
+
+Beyond the basic `hello.ryx` and `calculator.ryx`, the `examples/` directory includes:
+
+- `raycaster.ryx` — real-time 3D raycaster with textured walls and item collection
+- `dungeon_crawler.ryx` — top-down roguelike with enemy AI, combat, particles, and 3 levels
+- `graphics_hello.ryx` — minimal graphics window demo
+- `concurrent_primes.ryx` — concurrent prime sieve using fibers and channels
+
+Graphics examples require a display and use the built-in `gfx_*` API backed by Ebiten.
 
 ## Notes
 

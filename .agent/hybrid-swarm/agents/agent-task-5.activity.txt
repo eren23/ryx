@@ -1,1 +1,1 @@
-All failures are caused by the pre-existing `pkg/vm/callback
+All tests pass. The implementation replaces the T10 placehol

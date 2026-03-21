@@ -1,0 +1,25 @@
+# Task: Add image builtin tests
+
+Add tests in `pkg/stdlib/graphics_test.go` for the image subsystem.
+
+Tests to add:
+1. `TestGraphics_ImageStore`: Create a small `image.RGBA` programmatically (e.g., 4x4 colored pixels), convert to `*ebiten.Image` via `ebiten.NewImageFromImage`, manually add to imageStore, verify handle is valid and dimensions are correct via width/height functions.
+2. `TestGraphics_DrawImageCmd`: Verify `DrawImageCmd` implements the `DrawCommand` interface (compile-time check). Create a DrawImageCmd with known values and verify fields.
+3. `TestGraphics_LoadImageInvalidPath`: Call GfxLoadImage with a non-existent path, verify it returns IntVal(-1) without panicking.
+
+Read for context:
+- `pkg/stdlib/graphics_test.go` (existing test patterns)
+- `pkg/stdlib/graphics_image.go` (the functions and types to test)
+
+Acceptance: `go test ./pkg/stdlib/ -run Image -v` passes.
+
+Target files: pkg/stdlib/graphics_test.go
+
+## Related Tests
+These test files cover your target files — run them to verify:
+- pkg/stdlib/graphics_test.go
+
+Verify: go test ./... pkg/stdlib/graphics_test.go
+
+## Context from Previous Runs
+No relevant learnings found for this project.

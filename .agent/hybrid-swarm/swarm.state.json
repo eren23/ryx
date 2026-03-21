@@ -1,14 +1,14 @@
 {
-  "run_id": "9125a3cd",
-  "goal": "# Goal: Bug Fixes, Image Support & Play Mode for Ryx Graphics\n\n## Overview\n\nFix critical bugs in the graphics/closure subsystem, add PNG image loading and drawing, and build a basic play mode for the raycaster. Also create an image viewer example suitable for wall display.\n\n**Repository**: `/Users/eren/Documents/ai/attocodepy_swarmtester_11`\n**Language**: Go 1.26.1 | **External deps**: `github.com/hajimehoshi/ebiten/v2 v2.9.9`\n\n---\n\n## Bug #1: Mutable Closure Captures Reset After Callback Return\n\n### Symptom\n\nIn the raycaster (`examples/raycaster.ryx`), the player position snaps back to the starting position (8.5, 8.5) every time movement keys are released. Mutable variables captured by the frame closure (`pos_x`, `pos_y`, `dir_x`, `dir_y`, `plane_x`, `plane_y`) lose their mutations between callback invocations.\n\n### Root Cause\n\n**File**: `pkg/mir/builder.go`, line 504-509 (`hir.Assign` handler)\n\nWhen `pos_x = nx` is executed inside an `if` block within the closure body, the MIR builder's SSA construction breaks the upvalue linkage:\n\n1. At closure entry (`buildLambdaFunction`, line 946-949), `pos_x` is registered as local L0 with `UpvalueAlias = 0`. Loads/stores of L0 correctly emit `OpLoadUpvalue`/`OpStoreUpvalue`.\n\n2. Inside `if gfx_key_pressed(KEY_W()) { ... pos_x = nx ... }`, the `hir.Assign` handler (line 506) calls `b.fn.NewLocal(e.Name, ...)` which creates a **new** local L1 with `UpvalueAlias = -1` (the default from `NewLocal` at `mir.go:506`).\n\n3. At the `if.merge` join point, SSA inserts a phi: `L2 = phi(then: L1, else: L0)`. L2 also gets `UpvalueAlias = -1`.\n\n4. Codegen (`codegen.go:829-837`) checks `UpvalueAlias` to decide between `OpStoreUpvalue` and `OpStoreLocal`. Since L1 and L2 have alias `-1`, mutations go to **ephemeral stack slots** that are destroyed when the closure returns.\n\n5. Next frame, `InvokeCallback` re-enters the closure. The upvalue cells still hold the original values.\n\n### Fix Strategy\n\nIn the `hir.Assign` case (`builder.go:504-509`), after creating the new local, look up the current definition of the variable and propagate its `UpvalueAlias`:\n\n```go\ncase *hir.Assign:\n    val := b.lowerExpr(e.Value)\n    local := b.fn.NewLocal(e.Name, e.Value.ExprType())\n    // Propagate UpvalueAlias from the current definition so mutations\n    // go to the closure cell, not ephemeral stack slots.\n    if curVal := b.readVariable(e.Name, b.curBlock); curVal != nil {\n        if ref, ok := curVal.(*Local); ok {\n            if alias := b.fn.Locals[int(ref.ID)].UpvalueAlias; alias >= 0 {\n                b.fn.Locals[int(local)].UpvalueAlias = alias\n            }\n        }\n    }\n    b.emit(&Assign{Dest: local, Src: val, Type: e.Value.ExprType()})\n    b.writeVariable(e.Name, b.curBlock, local)\n    return UnitConst()\n```\n\nAlso in `readVariableRecursive` (line 164-214), when creating a phi dest, propagate `UpvalueAlias` if all non-trivial phi operands agree on the same alias.\n\n### Key Code References\n\n| What | Where | Notes |\n|------|-------|-------|\n| `hir.Assign` handler | `pkg/mir/builder.go:504-509` | Creates new SSA local without alias \u2014 **the bug** |\n| `buildLambdaFunction` | `pkg/mir/builder.go:916-950` | Sets `UpvalueAlias` on initial capture locals |\n| `NewLocal` default | `pkg/mir/mir.go:506` | `UpvalueAlias: -1` by default |\n| `readVariableRecursive` | `pkg/mir/builder.go:164-214` | Creates phi dest locals \u2014 needs alias propagation |\n| `emitStoreLocal` | `pkg/codegen/codegen.go:829-837` | Dispatches to `OpStoreUpvalue` if `UpvalueAlias >= 0` |\n| `emitLoadLocal` | `pkg/codegen/codegen.go:818-826` | Dispatches to `OpLoadUpvalue` if `UpvalueAlias >= 0` |\n| `OpMakeClosure` | `pkg/vm/vm.go:680-692` | Creates closed `UpvalueCell` \u2014 correct, not the bug |\n| `UpvalueCell.Set` | `pkg/vm/value.go:306-311` | Updates closed value \u2014 correct |\n| `InvokeCallback` | `pkg/vm/callback.go:12-81` | Reuses same closure object \u2014 correct |\n\n---\n\n## Bug #2: Movement Quality\n\nThe raycaster uses fixed `move_speed = 0.12` per frame. At variable frame rates, movement speed fluctuates. After fixing Bug #1, add delta-time-based movement via a new `gfx_delta_time()` builtin.\n\n---\n\n## New & Modified Files\n\n| File | Action | Est. Lines | Description |\n|------|--------|-----------|-------------|\n| `pkg/mir/builder.go` | Modify | +~20 | Propagate `UpvalueAlias` in `hir.Assign` and phi construction |\n| `pkg/mir/mir_test.go` | Modify | +~40 | Unit test for `UpvalueAlias` propagation through assignments and phis |\n| `pkg/stdlib/graphics_bridge.go` | Modify | +~15 | Add `gfx_delta_time()` builtin |\n| `pkg/stdlib/graphics_image.go` | Create | ~200 | `ImageStore`, `gfx_load_image`, `gfx_draw_image`, `gfx_draw_image_scaled`, `gfx_image_width`, `gfx_image_height` |\n| `pkg/stdlib/graphics_test.go` | Modify | +~60 | Image builtin tests |\n| `pkg/stdlib/core.go` | Modify | +~5 | Register image builtins |\n| `pkg/codegen/codegen.go` | Modify | +~10 | Add new builtin names to `callBuiltinNames` |\n| `examples/raycaster.ryx` | Modify | +~120 | Delta-time movement, items, HUD, start/game-over screens |\n| `examples/image_viewer.ryx` | Create | ~60 | PNG viewer for wall display |\n| `tests/testdata/programs/closure_mut_capture.ryx` | Create | ~30 | E2E test for mutable closure captures |\n| `tests/testdata/programs/closure_mut_capture.expected` | Create | ~5 | Expected output |\n| `tests/integration/e2e_test.go` | Modify | +~10 | Verify new examples compile |\n\n---\n\n## Graphics Image API\n\nAll images are managed via integer handles. The `ImageStore` is a global slice of `*ebiten.Image` protected by a mutex (same pattern as `GraphicsState`).\n\n### New Builtins\n\n| Builtin | Signature | Description |\n|---------|-----------|-------------|\n| `gfx_delta_time` | `() -> Float` | Frame delta in seconds (`1.0 / ebiten.ActualTPS()`) |\n| `gfx_load_image` | `(path: String) -> Int` | Load PNG, return handle ID (or -1 on error) |\n| `gfx_draw_image` | `(handle: Int, x: Int, y: Int) -> ()` | Draw image at (x,y) |\n| `gfx_draw_image_scaled` | `(handle: Int, x: Int, y: Int, sx: Float, sy: Float) -> ()` | Draw scaled image |\n| `gfx_image_width` | `(handle: Int) -> Int` | Get image width |\n| `gfx_image_height` | `(handle: Int) -> Int` | Get image height |\n\n### Draw Command\n\n```go\ntype DrawImageCmd struct {\n    Handle int\n    X, Y   int\n    ScaleX, ScaleY float64\n}\n```\n\n`DrawImageCmd.Execute(screen)` looks up the image from `ImageStore` by handle, builds an `ebiten.DrawImageOptions` with translation (and scale if not 1.0), and calls `screen.DrawImage()`.\n\n---\n\n## Task Decomposition (4 Waves, 10 Tasks)\n\n### Wave 1 \u2014 Bug Fixes\n\n**T1: Fix mutable closure capture persistence**\n- Modify `pkg/mir/builder.go`:\n  - In `hir.Assign` handler (line 504-509): before creating the new local, read the current definition of the variable. If it resolves to a local with `UpvalueAlias >= 0`, propagate that alias to the newly created local.\n  - In `readVariableRecursive` (line 164-214): when creating a phi dest for multiple predecessors, check if all non-trivial phi operands resolve to locals with the same `UpvalueAlias`. If so, propagate that alias to the phi dest local.\n- Add test in `pkg/mir/mir_test.go`: verify `UpvalueAlias` propagation through SSA assignments inside conditionals.\n- Create `tests/testdata/programs/closure_mut_capture.ryx`: a closure that captures `let mut x = 0`, increments `x` inside an `if true { x = x + 1 }`, called 3 times in a loop via a helper that simulates repeated invocation. Prints `x` each time.\n- Create `tests/testdata/programs/closure_mut_capture.expected` with expected output `1\\n2\\n3\\n`.\n- Read files for context: `pkg/mir/builder.go`, `pkg/mir/mir.go` (LocalDef struct), `pkg/codegen/codegen.go` (emitStoreLocal/emitLoadLocal), `pkg/vm/value.go` (UpvalueCell), `pkg/vm/callback.go`\n- Acceptance: `go test ./...` passes, mutable captures persist across closure calls.\n\n**T2: Improve movement quality with delta-time** (depends on T1)\n- Add `gfx_delta_time()` builtin to `pkg/stdlib/graphics_bridge.go`: returns `1.0 / ebiten.ActualTPS()`.\n- Register in `pkg/stdlib/core.go` inside `RegisterBridgeBuiltins()`.\n- Add `\"gfx_delta_time\"` to `callBuiltinNames` in `pkg/codegen/codegen.go`.\n- Update `examples/raycaster.ryx`:\n  - Replace `let move_speed = 0.12` / `let rot_speed = 0.03` with base speeds: `let base_move = 4.0` / `let base_rot = 2.0` (units per second).\n  - In frame callback: `let dt = gfx_delta_time()`, then `let move_speed = base_move * dt`, `let rot_speed = base_rot * dt`.\n- Read files for context: `pkg/stdlib/graphics_bridge.go`, `pkg/stdlib/core.go`, `pkg/codegen/codegen.go`, `examples/raycaster.ryx`\n- Acceptance: `go build ./...` passes, raycaster movement is smooth and frame-rate independent.\n\n### Wave 2 \u2014 Image/Sprite Support (T3 & T4 parallel, T5 depends on both)\n\n**T3: Add `gfx_load_image` builtin (PNG loading)**\n- Create `pkg/stdlib/graphics_image.go`:\n  - `ImageStore` struct: `images []*ebiten.Image`, protected by `sync.Mutex`.\n  - Global `var imageStore = &ImageStore{}`.\n  - `GfxLoadImage(args, heap)`: takes String path, opens file, decodes PNG via `image/png`, converts via `ebiten.NewImageFromImage()`, appends to `imageStore.images`, returns `IntVal(handleID)`. Returns `IntVal(-1)` on error.\n  - `GfxImageWidth(args, heap)` / `GfxImageHeight(args, heap)`: given handle, return dimensions.\n  - `RegisterImageBuiltins(r *vm.BuiltinRegistry)`: registers `gfx_load_image`, `gfx_image_width`, `gfx_image_height`.\n- Add `\"gfx_load_image\"`, `\"gfx_image_width\"`, `\"gfx_image_height\"` to `callBuiltinNames` in `pkg/codegen/codegen.go`.\n- Read files for context: `pkg/stdlib/graphics_bridge.go` (pattern for GraphicsState), `pkg/stdlib/graphics_draw.go` (pattern for builtins), `pkg/stdlib/core.go` (registration pattern), `pkg/codegen/codegen.go` (callBuiltinNames)\n- Acceptance: `go build ./...` passes, `gfx_load_image` loads a PNG and returns valid handle.\n\n**T4: Add `gfx_draw_image` and `gfx_draw_image_scaled` builtins**\n- Add to `pkg/stdlib/graphics_image.go`:\n  - `DrawImageCmd` struct implementing `DrawCommand` interface: fields `Handle int`, `X int`, `Y int`, `ScaleX float64`, `ScaleY float64`.\n  - `DrawImageCmd.Execute(screen *ebiten.Image)`: looks up image from `imageStore` by handle, creates `ebiten.DrawImageOptions` with `GeoM.Translate` and optional `GeoM.Scale`, calls `screen.DrawImage()`.\n  - `GfxDrawImage(args, heap)`: `(handle: Int, x: Int, y: Int) -> ()`. Creates `DrawImageCmd{ScaleX: 1.0, ScaleY: 1.0}` and appends to draw queue.\n  - `GfxDrawImageScaled(args, heap)`: `(handle: Int, x: Int, y: Int, sx: Float, sy: Float) -> ()`. Creates `DrawImageCmd` with given scale.\n  - Register both in `RegisterImageBuiltins`.\n- Add `\"gfx_draw_image\"`, `\"gfx_draw_image_scaled\"` to `callBuiltinNames` in `pkg/codegen/codegen.go`.\n- Read files for context: `pkg/stdlib/graphics_bridge.go` (DrawCommand interface, AppendCommand pattern), `pkg/stdlib/graphics_draw.go` (existing draw command implementations like FillRectCmd)\n- Acceptance: `go build ./...` passes, drawing images works.\n\n**T5: Register image builtins and add tests** (depends on T3, T4)\n- Add `RegisterImageBuiltins(r)` call in `RegisterGraphics()` in `pkg/stdlib/core.go`.\n- Add tests in `pkg/stdlib/graphics_test.go`:\n  - `TestGraphics_ImageStore`: create a small `image.RGBA` programmatically, convert to `ebiten.Image`, verify handle and dimensions.\n  - `TestGraphics_DrawImageCmd`: verify `DrawImageCmd` implements `DrawCommand`.\n- Verify: `go test ./pkg/stdlib/ -run Image` passes, `go test ./...` passes.\n- Read files for context: `pkg/stdlib/core.go` (RegisterGraphics), `pkg/stdlib/graphics_test.go` (existing test patterns)\n- Acceptance: all tests pass.\n\n### Wave 3 \u2014 Play Mode (T6 first, then T7 & T8 parallel)\n\n**T6: Add collectible/item system to raycaster** (depends on T1, T2)\n- Modify `examples/raycaster.ryx`:\n  - Add `let mut items = [...]` array (16x16, 1 = collectible present). Place 6-8 items in open spaces.\n  - Add `let mut score = 0` and `let mut total_items = <count>` as captured mutable vars.\n  - In frame callback after movement: check `items[floor(pos_y) * 16 + floor(pos_x)]`. If 1, set to 0, increment `score`.\n  - On minimap: draw small colored dots (cyan) for uncollected items.\n- Read files for context: `examples/raycaster.ryx` (current state)\n- Acceptance: walking over items collects them, score increments, items visible on minimap.\n\n**T7: Add score display and HUD overlay** (depends on T6)\n- Modify `examples/raycaster.ryx`:\n  - Draw semi-transparent HUD bar at top: `gfx_set_color(gfx_rgba(0, 0, 0, 160))`, `gfx_fill_rect(0, 0, screen_w, 30)`.\n  - Display score: `gfx_text(10, 8, \"Score: \" ++ int_to_string(score))`.\n  - Display items remaining: compute `remaining` from items array, show `\"Items: \" ++ int_to_string(remaining) ++ \"/\" ++ int_to_string(total_items)`.\n  - Move FPS display into the HUD bar area.\n- Read files for context: `examples/raycaster.ryx`\n- Acceptance: HUD shows score, items remaining, FPS. Updates in real time.\n\n**T8: Add start screen and game-over screen** (depends on T6)\n- Modify `examples/raycaster.ryx`:\n  - Add `let mut game_state = 0` (0 = start, 1 = playing, 2 = win).\n  - Frame callback: branch on `game_state`.\n  - State 0 (start screen): black background, centered title \"RYX RAYCASTER\" in white, \"Press ENTER to start\" below. On `gfx_key_just_pressed(KEY_ENTER())`: set `game_state = 1`.\n  - State 1 (playing): existing raycaster logic. When `score == total_items`: set `game_state = 2`.\n  - State 2 (win screen): \"ALL ITEMS COLLECTED!\" title, \"Score: N\" display, \"Press ENTER to restart\". On ENTER: reset `pos_x`/`pos_y`/`dir`/`plane`/`score`/`items` to initial values, set `game_state = 0`.\n- Read files for context: `examples/raycaster.ryx`\n- Acceptance: game has title screen, gameplay, and win screen with restart.\n\n### Wave 4 \u2014 Image Viewer & Polish (T9 & T10 parallel)\n\n**T9: Create `examples/image_viewer.ryx`** (depends on T5)\n- Create `examples/image_viewer.ryx`:\n  - Load a PNG: `let img = gfx_load_image(\"examples/assets/sample.png\")`.\n  - Get dimensions: `let iw = gfx_image_width(img)`, `let ih = gfx_image_height(img)`.\n  - Init window: `gfx_init(800, 600, \"Ryx Image Viewer\")`.\n  - Frame callback: clear screen black, draw image centered (`gfx_draw_image(img, 400 - iw/2, 300 - ih/2)`), ESC to quit.\n  - Add zoom support: `let mut zoom = 1.0`. +/- keys adjust zoom. Use `gfx_draw_image_scaled` when zoom != 1.0.\n- Create a small sample PNG at `examples/assets/sample.png` (can be programmatically generated as a 64x64 colorful pattern if no real asset available \u2014 or document that users should place their own).\n- Add `KEY_PLUS` and `KEY_MINUS` key constants in `pkg/stdlib/graphics_input.go` if not already present, register in `pkg/codegen/codegen.go`.\n- Read files for context: `pkg/stdlib/graphics_input.go` (existing key constants), `pkg/stdlib/graphics_image.go` (image API)\n- Acceptance: `./ryx run examples/image_viewer.ryx` opens window showing the image. ESC quits.\n\n**T10: Integration tests and polish** (depends on all)\n- Add compile-only tests in `tests/integration/e2e_test.go` for `examples/raycaster.ryx` and `examples/image_viewer.ryx` (headless, no display needed).\n- Create `tests/testdata/programs/closure_mut_capture.ryx` if not already created in T1: ensure it uses `array_map` or a loop to invoke the closure multiple times, printing accumulated state.\n- Create corresponding `.expected` file.\n- Add codegen test in `pkg/codegen/codegen_test.go`: compile a closure with mutable capture assigned inside `if`, verify `OpStoreUpvalue` is emitted (not `OpStoreLocal`).\n- Run full suite: `go test ./...`.\n- Read files for context: `tests/integration/e2e_test.go`, `pkg/codegen/codegen_test.go`\n- Acceptance: `go test ./...` all green. No regressions.\n\n---\n\n## Risks & Mitigations\n\n| Risk | Mitigation |\n|------|-----------|\n| UpvalueAlias fix could break non-closure SSA assignments | Only propagate alias when the current def already has one; non-closure locals have alias -1 and are untouched |\n| Nested ifs/while inside closure may need multiple propagation hops | The `readVariable` chain recursively resolves through blocks; alias propagation at each `Assign` site ensures the chain is maintained |\n| Phi nodes with mixed upvalue/non-upvalue operands | Only propagate if ALL non-trivial operands agree; mixed case can't happen with Ryx's capture semantics |\n| Image loading requires filesystem access | Return -1 handle on error instead of panicking; test with programmatic images |\n| Raycaster grows complex with play mode | Changes are additive: new state var + conditional branches; existing logic wrapped in `if game_state == 1` |\n| `ebiten.ActualTPS()` returns 0 on first frame | Guard: `if dt <= 0.0 { dt = 1.0 / 60.0 }` |\n\n---\n\n## Build & Verification Commands\n\n```bash\n# After Wave 1:\ngo test ./pkg/mir/ -run UpvalueAlias          # Unit test for alias propagation\ngo test ./tests/integration/ -run E2E         # E2E including new closure test\ngo test ./...                                  # Full regression\n\n# After Wave 2:\ngo test ./pkg/stdlib/ -run Image              # Image builtin tests\ngo build ./...                                 # Compiles with new builtins\n\n# After Wave 3:\n./ryx run examples/raycaster.ryx              # Play mode demo (manual)\n./ryx check examples/raycaster.ryx            # Type-check only (CI)\n\n# After Wave 4:\n./ryx run examples/image_viewer.ryx           # Image viewer (manual)\ngo test ./...                                  # Everything green\n```",
+  "run_id": "24d6d50c",
+  "goal": "# Goal: Dungeon Crawler Game Example for Ryx\n\n## Overview\n\nBuild a top-down dungeon crawler / roguelike-lite game as a single-file Ryx program (`examples/dungeon_crawler.ryx`) that comprehensively demonstrates the language's graphics, math, array, closure, and control-flow capabilities. The game features tile-based rendering, multiple enemy types with simple AI, combat, items, particle effects, a minimap, multiple levels, and full game-state management (title, play, game-over, win screens). A compile-only integration test is added to verify the program compiles without errors.\n\n**Repository**: `/Users/eren/Documents/ai/attocodepy_swarmtester_11`\n**Language**: Go 1.26.1 | **External deps**: `github.com/hajimehoshi/ebiten/v2 v2.9.9`\n\n### What Success Looks Like\n\nAfter this project completes:\n- `./ryx run examples/dungeon_crawler.ryx` opens a 640x480 window displaying a title screen\n- Pressing ENTER starts the game: player navigates a tile-based dungeon, fights enemies, collects items\n- Multiple levels (3 hardcoded maps) with increasing difficulty\n- Game-over screen on player death, win screen on clearing all levels\n- The example is approximately 1200-1600 lines of Ryx, demonstrating nearly every available builtin\n- `go test ./tests/integration/ -run DungeonCrawler` passes (compile-only test)\n- All existing tests continue to pass: `go test ./...`\n\n### Language Constraints (Critical for Workers)\n\nRyx has **no module/import system**. The entire game MUST be a single `.ryx` file. Workers implement logical sections (delineated by comment banners) within this single file.\n\nRyx has **no classes or objects** in the OOP sense. State management uses:\n- `let mut` variables captured by closures for mutable game state\n- Flat arrays indexed by integer offsets for entity data (parallel-array pattern)\n- Helper functions that take arrays + indices as arguments\n- Structs for immutable data definitions (if needed, but arrays are preferred for runtime mutation)\n\nKey Ryx syntax reminders:\n- String concatenation: `++` (NOT `+`)\n- Mutable variables: `let mut x = 5;`\n- Array creation: `[1, 2, 3]`\n- Array indexing: `arr[i]`\n- Array element mutation: `arr[i] = value`\n- No negative number literals: use `0 - value` or `0.0 - value`\n- Closures: `|| { body }` or `|x: Int| -> Int { body }`\n- No `for` loops with ranges in closures; use `while` loops: `let mut i = 0; while i < n { ...; i = i + 1 };`\n- All blocks must produce a value; use `()` or a trailing expression\n- Semicolons separate expressions within blocks (`;` after `if`/`while` blocks)\n- Calling zero-arg builtins still requires parens: `COLOR_RED()`, `KEY_SPACE()`, `gfx_fps()`\n- Boolean operators: `&&`, `||`, `!`\n- No unary negation for floats in some contexts: write `0.0 - x` instead of `-x`\n- Function definitions go OUTSIDE `main()`, before it\n- The frame callback closure and all mutable game state go INSIDE `main()`\n\n---\n\n## Architecture: Entity-Component via Parallel Arrays\n\nSince Ryx has no classes or objects for runtime mutation, entities (player, enemies, particles, items) are stored as **parallel flat arrays** where each array holds one attribute, and entities are identified by integer index.\n\n### Enemy Storage Pattern\n\n```ryx\n// Enemy attributes \u2014 parallel arrays, max 32 enemies\nlet max_enemies = 32;\nlet mut enemy_x     = [0.0, 0.0, 0.0, ...];  // 32 floats: x position\nlet mut enemy_y     = [0.0, 0.0, 0.0, ...];  // 32 floats: y position\nlet mut enemy_type  = [0, 0, 0, ...];         // 32 ints: 0=none, 1=slime, 2=skeleton, 3=ghost, 4=boss\nlet mut enemy_hp    = [0, 0, 0, ...];         // 32 ints: hit points\nlet mut enemy_alive = [0, 0, 0, ...];         // 32 ints: 0=dead, 1=alive\nlet mut enemy_dir   = [0.0, 0.0, 0.0, ...];  // 32 floats: facing direction (radians)\nlet mut enemy_timer = [0.0, 0.0, 0.0, ...];  // 32 floats: AI cooldown timer\nlet mut enemy_count = 0;                       // number of active enemies\n```\n\n### Particle Storage Pattern\n\n```ryx\n// Particle attributes \u2014 parallel arrays, max 64 particles\nlet max_particles = 64;\nlet mut part_x     = [0.0, 0.0, ...];  // x position\nlet mut part_y     = [0.0, 0.0, ...];  // y position\nlet mut part_vx    = [0.0, 0.0, ...];  // x velocity\nlet mut part_vy    = [0.0, 0.0, ...];  // y velocity\nlet mut part_life  = [0.0, 0.0, ...];  // remaining lifetime (seconds)\nlet mut part_color = [0, 0, ...];       // packed RGBA color\nlet mut part_active = [0, 0, ...];     // 0=inactive, 1=active\n```\n\n### Map Storage Pattern\n\n```ryx\n// Map is a flat array of 20x15 = 300 tiles\n// Tile types: 0=floor, 1=wall, 2=door, 3=exit, 4=wall_variant2, 5=wall_variant3\nlet map_w = 20;\nlet map_h = 15;\nlet mut tiles = [0, 0, 0, ...];  // 300 ints\n```\n\n### Item Storage Pattern\n\n```ryx\n// Items \u2014 parallel arrays, max 16 items per level\nlet max_items = 16;\nlet mut item_x     = [0, 0, ...];  // tile x\nlet mut item_y     = [0, 0, ...];  // tile y\nlet mut item_type  = [0, 0, ...];  // 0=none, 1=health_potion, 2=gem, 3=key\nlet mut item_active = [0, 0, ...]; // 0=collected, 1=active\nlet mut item_count = 0;\n```\n\n---\n\n## Graphics API Reference (Existing Builtins Used)\n\nAll of these builtins already exist. No Go code changes are needed for the game itself.\n\n### Drawing Primitives\n\n| Builtin | Signature | Usage in Game |\n|---------|-----------|---------------|\n| `gfx_init` | `(w: Int, h: Int, title: String) -> ()` | Initialize 640x480 window |\n| `gfx_run` | `(callback: fn() -> ()) -> ()` | Start game loop |\n| `gfx_clear` | `(color: Int) -> ()` | Clear screen each frame |\n| `gfx_set_color` | `(color: Int) -> ()` | Set current draw color |\n| `gfx_fill_rect` | `(x: Int, y: Int, w: Int, h: Int) -> ()` | Draw tiles, entities, HUD bars |\n| `gfx_rect` | `(x: Int, y: Int, w: Int, h: Int) -> ()` | Draw tile outlines, selection |\n| `gfx_line` | `(x1: Int, y1: Int, x2: Int, y2: Int) -> ()` | Draw direction indicators, grid lines |\n| `gfx_fill_circle` | `(cx: Int, cy: Int, r: Int) -> ()` | Draw particles, item glows |\n| `gfx_circle` | `(cx: Int, cy: Int, r: Int) -> ()` | Draw enemy detection range (debug) |\n| `gfx_text` | `(x: Int, y: Int, s: String) -> ()` | HUD text, title screen text |\n| `gfx_pixel` | `(x: Int, y: Int) -> ()` | Small particle dots |\n| `gfx_quit` | `() -> ()` | Exit game |\n\n### Color Helpers\n\n| Builtin | Signature | Usage |\n|---------|-----------|-------|\n| `gfx_rgb` | `(r: Int, g: Int, b: Int) -> Int` | Custom colors for tiles, enemies |\n| `gfx_rgba` | `(r: Int, g: Int, b: Int, a: Int) -> Int` | Semi-transparent HUD overlays |\n| `COLOR_BLACK` | `() -> Int` | Background |\n| `COLOR_WHITE` | `() -> Int` | Text |\n| `COLOR_RED` | `() -> Int` | Player health, damage flash |\n| `COLOR_GREEN` | `() -> Int` | Health potions, floor tiles |\n| `COLOR_BLUE` | `() -> Int` | Water/ice tiles |\n| `COLOR_YELLOW` | `() -> Int` | Gems, score |\n\n### Input\n\n| Builtin | Signature | Usage |\n|---------|-----------|-------|\n| `gfx_key_pressed` | `(key: Int) -> Bool` | Movement (held keys) |\n| `gfx_key_just_pressed` | `(key: Int) -> Bool` | Attack, menu selection (single press) |\n| `gfx_mouse_x` | `() -> Int` | (reserved, not used) |\n| `gfx_mouse_y` | `() -> Int` | (reserved, not used) |\n| `KEY_UP` / `KEY_DOWN` / `KEY_LEFT` / `KEY_RIGHT` | `() -> Int` | Arrow movement |\n| `KEY_W` / `KEY_A` / `KEY_S` / `KEY_D` | `() -> Int` | WASD movement |\n| `KEY_SPACE` | `() -> Int` | Attack |\n| `KEY_ESCAPE` | `() -> Int` | Quit / back to menu |\n| `KEY_ENTER` | `() -> Int` | Menu confirm |\n\n### Screen & Timing\n\n| Builtin | Signature | Usage |\n|---------|-----------|-------|\n| `gfx_width` | `() -> Int` | Screen width |\n| `gfx_height` | `() -> Int` | Screen height |\n| `gfx_fps` | `() -> Float` | FPS display |\n| `gfx_delta_time` | `() -> Float` | Frame-rate-independent movement and timers |\n\n### Image Support\n\n| Builtin | Signature | Usage |\n|---------|-----------|-------|\n| `gfx_load_image` | `(path: String) -> Int` | Load wall texture PNGs |\n| `gfx_draw_image` | `(handle: Int, x: Int, y: Int) -> ()` | Draw wall textures on wall tiles |\n| `gfx_draw_image_scaled` | `(handle: Int, x: Int, y: Int, sx: Float, sy: Float) -> ()` | Scale textures to tile size |\n| `gfx_image_width` | `(handle: Int) -> Int` | Get texture dimensions |\n| `gfx_image_height` | `(handle: Int) -> Int` | Get texture dimensions |\n\n### Math (Existing)\n\n| Builtin | Usage |\n|---------|-------|\n| `sin(x)`, `cos(x)` | Enemy patrol circles, particle spread |\n| `sqrt(x)` | Distance calculations |\n| `atan2(y, x)` | Angle between player and enemy |\n| `abs(x)` | Absolute distance |\n| `min(a, b)`, `max(a, b)` | Clamping, bounds |\n| `clamp(x, lo, hi)` | Health bounds, position bounds |\n| `floor(x)`, `ceil(x)` | Tile coordinate conversion |\n| `random_int(lo, hi)` | Item placement, enemy behavior variance |\n| `random_float()` | Particle velocity variance |\n| `pi()` | Angle constants |\n\n### Type Conversions (Existing)\n\n| Builtin | Usage |\n|---------|-------|\n| `int_to_float(n)` | Convert tile coords to float for math |\n| `float_to_int(f)` | Convert float positions to pixel coords |\n| `int_to_string(n)` | HUD display (score, health, level) |\n\n### Array Operations (Existing)\n\n| Builtin | Usage |\n|---------|-------|\n| `array_len(arr)` | Get array length |\n\n---\n\n## New & Modified Files\n\n| File | Action | Est. Lines | Description |\n|------|--------|-----------|-------------|\n| `examples/dungeon_crawler.ryx` | Create | ~1400 | Complete dungeon crawler game |\n| `examples/assets/wall_stone.png` | Create | binary | 32x32 stone wall texture (simple gray brick pattern) |\n| `examples/assets/wall_moss.png` | Create | binary | 32x32 mossy wall texture (green-gray pattern) |\n| `tests/integration/e2e_test.go` | Modify | +~15 | Add compile-only test for dungeon_crawler.ryx |\n\n---\n\n## Game Design Specification\n\n### Screen Layout (640 x 480)\n\n```\n+--------------------------------------------------+\n|  [Minimap 80x60]    LEVEL 1    HP: #### [80/100] |  <- HUD bar (30px)\n|                     Score: 42   Enemies: 3        |\n+--------------------------------------------------+\n|                                                    |\n|     Tile grid rendered at 32x32 pixels per tile    |\n|     Map is 20x15 tiles = 640x480 pixels exactly    |\n|     (no scrolling needed for this tile size)        |\n|                                                    |\n|     Camera viewport shows the full level           |\n|                                                    |\n|                                                    |\n+--------------------------------------------------+\n```\n\nWait -- 20x15 tiles at 32px = 640x480, which fills the whole screen. The HUD needs to overlay on top. Let us use a slightly smaller tile grid or overlay the HUD semi-transparently.\n\n**Final layout decision**: 20 columns x 14 rows visible tile area = 640x448 pixels for the game. The top 32 pixels (row 0 of tiles) are overlaid with a semi-transparent HUD bar. The minimap sits in the top-left corner of the HUD overlay. The tile rendering uses the full 640x480 but the HUD overlays on top.\n\n### Tile Types\n\n| ID | Name | Color | Walkable | Description |\n|----|------|-------|----------|-------------|\n| 0 | Floor | `gfx_rgb(60, 60, 70)` | Yes | Basic stone floor |\n| 1 | Wall | `gfx_rgb(120, 100, 80)` | No | Stone wall (draw texture if loaded) |\n| 2 | Door | `gfx_rgb(140, 90, 40)` | Yes | Opened door (visual only) |\n| 3 | Exit | `gfx_rgb(0, 200, 100)` | Yes | Level exit staircase \u2014 glows |\n| 4 | Wall variant | `gfx_rgb(90, 110, 80)` | No | Mossy wall (draw moss texture if loaded) |\n| 5 | Water | `gfx_rgb(40, 60, 140)` | No | Decorative water tile |\n\n### Player\n\n- Position: float x, y (in tile coordinates, e.g., 3.5 means center of tile column 3)\n- Movement: grid-aligned, smooth interpolation. When a movement key is pressed and the player is not already moving, start a smooth transition to the adjacent tile over 0.15 seconds.\n- Health: 0-100, starts at 100\n- Attack: press SPACE, damages all enemies within 1.5 tile radius for 20-35 damage\n- Attack cooldown: 0.4 seconds\n- Damage flash: screen flashes red briefly when hit\n- Sprite: drawn as a colored rectangle with a directional indicator\n\n### Enemy Types\n\n| Type | ID | HP | Speed | Detect Range | Damage | Color | Size | Behavior |\n|------|----|----|-------|-------------|--------|-------|------|----------|\n| Slime | 1 | 30 | 1.5 | 4.0 | 8 | `gfx_rgb(80, 200, 80)` | 20x20 | Random patrol, chase in range |\n| Skeleton | 2 | 50 | 2.0 | 6.0 | 15 | `gfx_rgb(220, 220, 200)` | 22x22 | Patrol path, chase + retreat when low HP |\n| Ghost | 3 | 25 | 3.0 | 8.0 | 12 | `gfx_rgba(180, 180, 255, 180)` | 18x18 | Ignores walls, always chases |\n| Boss | 4 | 150 | 1.0 | 10.0 | 25 | `gfx_rgb(200, 50, 50)` | 28x28 | Chases, spawns slimes at 50% HP |\n\n### Item Types\n\n| Type | ID | Effect | Color | Symbol |\n|------|----|--------|-------|--------|\n| Health Potion | 1 | Restore 30 HP | `gfx_rgb(255, 80, 80)` | Red square with cross |\n| Gem | 2 | +50 score | `gfx_rgb(100, 200, 255)` | Cyan diamond shape |\n| Key | 3 | (reserved for future door unlocking) | `gfx_rgb(255, 215, 0)` | Gold square |\n\n### Level Definitions (3 Levels)\n\nEach level is a flat array of 20x15 = 300 tile IDs, plus arrays specifying enemy spawn positions/types and item positions/types.\n\n**Level 1: \"The Entrance\"** (Tutorial level)\n- Simple layout: outer walls, a few internal walls, 2 rooms connected by a corridor\n- Enemies: 3 slimes\n- Items: 2 health potions, 3 gems\n- Exit in the far corner\n\n**Level 2: \"The Crypt\"**\n- More complex layout: multiple rooms, narrow corridors, a central room with water tiles\n- Enemies: 4 slimes, 2 skeletons, 1 ghost\n- Items: 3 health potions, 4 gems\n- Exit behind the central room\n\n**Level 3: \"The Throne Room\"**\n- Large open central area with pillars, side chambers\n- Enemies: 2 slimes, 2 skeletons, 2 ghosts, 1 boss\n- Items: 4 health potions, 5 gems\n- Exit appears only after boss is defeated\n\n### Game States\n\n| State | ID | Description |\n|-------|-----|-------------|\n| Title | 0 | Show game name, \"Press ENTER to start\" |\n| Playing | 1 | Active gameplay |\n| Game Over | 2 | Player died, show score, \"Press ENTER to restart\" |\n| Level Complete | 3 | Brief transition screen before next level |\n| Victory | 4 | All 3 levels cleared, show final score |\n| Paused | 5 | Press ESC during play, show \"PAUSED\" overlay |\n\n### Particle Effects\n\n- **Enemy death**: 12-16 particles in the enemy's color, spread outward, fade over 0.6 seconds\n- **Item pickup**: 8 particles in the item's color, spiral upward, fade over 0.4 seconds\n- **Player attack**: 6 white particles in a semicircle in the attack direction, fade over 0.3 seconds\n- **Player damage**: 4 red particles from player position, fade over 0.3 seconds\n\n### Minimap\n\n- Drawn in the top-left corner, 80x60 pixels\n- Each tile = 4x3 pixel rectangle\n- Semi-transparent black background\n- Walls shown as gray, floor as dark, exit as green\n- Player shown as bright white dot\n- Enemies shown as red dots\n- Items shown as cyan dots\n\n---\n\n## Task Decomposition (5 Waves, 18 Tasks)\n\n### Wave 1 \u2014 Foundation: Helper Functions & Constants (T1-T4, all parallel)\n\nThese tasks define utility functions and constants that appear BEFORE `fn main()` in the file. They have no dependencies on each other.\n\n---\n\n#### T1: Color Utility Functions and Game Constants\n\n**Description**: Define all color-manipulation helper functions and game-wide constants at the top of `examples/dungeon_crawler.ryx`. These functions are used by every other section of the game for computing tile colors, shading, damage flash effects, and HUD rendering.\n\n**File**: `examples/dungeon_crawler.ryx` (lines 1-120 approximately)\n\n**Exact code to write**:\n\n```ryx\n// ============================================================================\n// DUNGEON CRAWLER \u2014 A Ryx Roguelike Demo\n// ============================================================================\n//\n// A top-down dungeon crawler demonstrating tile-based rendering, enemy AI,\n// combat, items, particles, multiple levels, and full state management.\n//\n// Controls:\n//   W/Up     \u2014 move up\n//   S/Down   \u2014 move down\n//   A/Left   \u2014 move left\n//   D/Right  \u2014 move right\n//   SPACE    \u2014 attack enemies in range\n//   ENTER    \u2014 confirm menu selections\n//   ESC      \u2014 pause / quit\n//\n// Requires: Ryx graphics runtime (Ebiten backend)\n// ============================================================================\n\n// ---------------------------------------------------------------------------\n// Section 1: Color Utilities\n// ---------------------------------------------------------------------------\n\n// Extract red channel from packed RGBA color (0xRRGGBBAA)\nfn color_r(c: Int) -> Int {\n    (c / 0x1000000) % 256\n}\n\n// Extract green channel from packed RGBA color\nfn color_g(c: Int) -> Int {\n    (c / 0x10000) % 256\n}\n\n// Extract blue channel from packed RGBA color\nfn color_b(c: Int) -> Int {\n    (c / 0x100) % 256\n}\n\n// Extract alpha channel from packed RGBA color\nfn color_a(c: Int) -> Int {\n    c % 256\n}\n\n// Multiply RGB channels by a brightness factor [0.0 .. 1.0], preserve alpha\nfn color_scale(c: Int, factor: Float) -> Int {\n    let r = float_to_int(int_to_float(color_r(c)) * factor);\n    let g = float_to_int(int_to_float(color_g(c)) * factor);\n    let b = float_to_int(int_to_float(color_b(c)) * factor);\n    let a = color_a(c);\n    gfx_rgba(clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255), a)\n}\n\n// Linearly interpolate between two colors by factor t [0.0 .. 1.0]\n// When t=0.0 returns c1, when t=1.0 returns c2\nfn color_lerp(c1: Int, c2: Int, t: Float) -> Int {\n    let r1 = int_to_float(color_r(c1));\n    let g1 = int_to_float(color_g(c1));\n    let b1 = int_to_float(color_b(c1));\n    let r2 = int_to_float(color_r(c2));\n    let g2 = int_to_float(color_g(c2));\n    let b2 = int_to_float(color_b(c2));\n    let r = float_to_int(r1 + (r2 - r1) * t);\n    let g = float_to_int(g1 + (g2 - g1) * t);\n    let b = float_to_int(b1 + (b2 - b1) * t);\n    gfx_rgba(clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255), 255)\n}\n\n// Darken a color by halving RGB channels (used for alternate tile shading)\nfn color_darken(c: Int) -> Int {\n    gfx_rgba(color_r(c) / 2, color_g(c) / 2, color_b(c) / 2, color_a(c))\n}\n\n// Lighten a color by averaging with white\nfn color_lighten(c: Int) -> Int {\n    gfx_rgba(\n        (color_r(c) + 255) / 2,\n        (color_g(c) + 255) / 2,\n        (color_b(c) + 255) / 2,\n        color_a(c)\n    )\n}\n```\n\nNext, define game constants:\n\n```ryx\n// ---------------------------------------------------------------------------\n// Section 2: Game Constants\n// ---------------------------------------------------------------------------\n\n// Screen dimensions\nfn screen_w() -> Int { 640 }\nfn screen_h() -> Int { 480 }\n\n// Tile dimensions (in pixels)\nfn tile_size() -> Int { 32 }\n\n// Map dimensions (in tiles)\nfn map_cols() -> Int { 20 }\nfn map_rows() -> Int { 15 }\nfn map_len() -> Int { 300 }  // 20 * 15\n\n// Tile type constants\nfn TILE_FLOOR() -> Int { 0 }\nfn TILE_WALL() -> Int { 1 }\nfn TILE_DOOR() -> Int { 2 }\nfn TILE_EXIT() -> Int { 3 }\nfn TILE_WALL2() -> Int { 4 }\nfn TILE_WATER() -> Int { 5 }\n\n// Entity limits\nfn MAX_ENEMIES() -> Int { 32 }\nfn MAX_PARTICLES() -> Int { 64 }\nfn MAX_ITEMS() -> Int { 16 }\n\n// Player constants\nfn PLAYER_MAX_HP() -> Int { 100 }\nfn PLAYER_MOVE_TIME() -> Float { 0.15 }\nfn PLAYER_ATTACK_RANGE() -> Float { 1.5 }\nfn PLAYER_ATTACK_COOLDOWN() -> Float { 0.4 }\nfn PLAYER_ATTACK_MIN_DMG() -> Int { 20 }\nfn PLAYER_ATTACK_MAX_DMG() -> Int { 35 }\n\n// Enemy type constants\nfn ENEMY_NONE() -> Int { 0 }\nfn ENEMY_SLIME() -> Int { 1 }\nfn ENEMY_SKELETON() -> Int { 2 }\nfn ENEMY_GHOST() -> Int { 3 }\nfn ENEMY_BOSS() -> Int { 4 }\n\n// Item type constants\nfn ITEM_NONE() -> Int { 0 }\nfn ITEM_HEALTH() -> Int { 1 }\nfn ITEM_GEM() -> Int { 2 }\nfn ITEM_KEY() -> Int { 3 }\n\n// Game state constants\nfn STATE_TITLE() -> Int { 0 }\nfn STATE_PLAYING() -> Int { 1 }\nfn STATE_GAME_OVER() -> Int { 2 }\nfn STATE_LEVEL_COMPLETE() -> Int { 3 }\nfn STATE_VICTORY() -> Int { 4 }\nfn STATE_PAUSED() -> Int { 5 }\n```\n\n**Acceptance Criteria**:\n- All functions are syntactically valid Ryx and compile without errors\n- `color_r`, `color_g`, `color_b`, `color_a` correctly extract packed RGBA channels\n- `color_scale(gfx_rgb(200, 100, 50), 0.5)` produces approximately `gfx_rgba(100, 50, 25, 255)`\n- `color_lerp(COLOR_RED(), COLOR_BLUE(), 0.5)` produces approximately `gfx_rgba(127, 0, 127, 255)`\n- All constant functions return the documented values\n- No mutable state is introduced (these are pure functions)\n- Read `examples/raycaster.ryx` for reference on the color extraction pattern (lines 19-29)\n\n---\n\n#### T2: Map and Tile Helper Functions\n\n**Description**: Define helper functions for tile-based map operations: looking up tile types, checking walkability, converting between tile coordinates and pixel coordinates, and computing distances between positions. These functions are used by movement, collision detection, enemy AI, and rendering.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~121-230 approximately, after T1's section)\n\n**Exact code to write**:\n\n```ryx\n// ---------------------------------------------------------------------------\n// Section 3: Map & Tile Helpers\n// ---------------------------------------------------------------------------\n\n// Look up the tile type at column x, row y in a map array.\n// Returns TILE_WALL (1) for out-of-bounds coordinates (safety boundary).\nfn tile_at(tiles: [Int], x: Int, y: Int) -> Int {\n    if x < 0 || x >= map_cols() || y < 0 || y >= map_rows() {\n        TILE_WALL()\n    } else {\n        tiles[y * map_cols() + x]\n    }\n}\n\n// Check if a tile at (x, y) can be walked on.\n// Floor (0), Door (2), and Exit (3) are walkable; walls (1, 4) and water (5) are not.\nfn is_walkable(tiles: [Int], x: Int, y: Int) -> Bool {\n    let t = tile_at(tiles, x, y);\n    t == TILE_FLOOR() || t == TILE_DOOR() || t == TILE_EXIT()\n}\n\n// Convert tile column to pixel x (left edge of tile)\nfn tile_to_px(tx: Int) -> Int {\n    tx * tile_size()\n}\n\n// Convert tile row to pixel y (top edge of tile)\nfn tile_to_py(ty: Int) -> Int {\n    ty * tile_size()\n}\n\n// Convert pixel x to tile column\nfn px_to_tile(px: Int) -> Int {\n    px / tile_size()\n}\n\n// Convert pixel y to tile row\nfn py_to_tile(py: Int) -> Int {\n    py / tile_size()\n}\n\n// Compute squared Euclidean distance between two points (avoids sqrt for comparisons)\nfn dist_sq(x1: Float, y1: Float, x2: Float, y2: Float) -> Float {\n    let dx = x2 - x1;\n    let dy = y2 - y1;\n    dx * dx + dy * dy\n}\n\n// Compute Euclidean distance between two points\nfn dist(x1: Float, y1: Float, x2: Float, y2: Float) -> Float {\n    sqrt(dist_sq(x1, y1, x2, y2))\n}\n\n// Compute Manhattan distance between two tile positions\nfn manhattan(x1: Int, y1: Int, x2: Int, y2: Int) -> Int {\n    abs(x2 - x1) + abs(y2 - y1)\n}\n\n// Get the color for rendering a tile type.\n// Returns a packed RGBA color.\nfn tile_color(t: Int) -> Int {\n    if t == TILE_FLOOR() { gfx_rgb(60, 60, 70) }\n    else if t == TILE_WALL() { gfx_rgb(120, 100, 80) }\n    else if t == TILE_DOOR() { gfx_rgb(140, 90, 40) }\n    else if t == TILE_EXIT() { gfx_rgb(0, 200, 100) }\n    else if t == TILE_WALL2() { gfx_rgb(90, 110, 80) }\n    else if t == TILE_WATER() { gfx_rgb(40, 60, 140) }\n    else { gfx_rgb(60, 60, 70) }\n}\n\n// Get the checkerboard variant of the floor color.\n// Alternates between two slightly different shades for visual interest.\nfn floor_color(x: Int, y: Int) -> Int {\n    if (x + y) % 2 == 0 {\n        gfx_rgb(55, 55, 65)\n    } else {\n        gfx_rgb(65, 65, 75)\n    }\n}\n\n// Get the color for an enemy type.\nfn enemy_color(etype: Int) -> Int {\n    if etype == ENEMY_SLIME() { gfx_rgb(80, 200, 80) }\n    else if etype == ENEMY_SKELETON() { gfx_rgb(220, 220, 200) }\n    else if etype == ENEMY_GHOST() { gfx_rgba(180, 180, 255, 180) }\n    else if etype == ENEMY_BOSS() { gfx_rgb(200, 50, 50) }\n    else { gfx_rgb(128, 128, 128) }\n}\n\n// Get the draw size (in pixels) for an enemy type.\nfn enemy_size(etype: Int) -> Int {\n    if etype == ENEMY_SLIME() { 20 }\n    else if etype == ENEMY_SKELETON() { 22 }\n    else if etype == ENEMY_GHOST() { 18 }\n    else if etype == ENEMY_BOSS() { 28 }\n    else { 16 }\n}\n\n// Get the detection range for an enemy type (in tile units).\nfn enemy_detect_range(etype: Int) -> Float {\n    if etype == ENEMY_SLIME() { 4.0 }\n    else if etype == ENEMY_SKELETON() { 6.0 }\n    else if etype == ENEMY_GHOST() { 8.0 }\n    else if etype == ENEMY_BOSS() { 10.0 }\n    else { 3.0 }\n}\n\n// Get the movement speed for an enemy type (tiles per second).\nfn enemy_speed(etype: Int) -> Float {\n    if etype == ENEMY_SLIME() { 1.5 }\n    else if etype == ENEMY_SKELETON() { 2.0 }\n    else if etype == ENEMY_GHOST() { 3.0 }\n    else if etype == ENEMY_BOSS() { 1.0 }\n    else { 1.0 }\n}\n\n// Get the max HP for an enemy type.\nfn enemy_max_hp(etype: Int) -> Int {\n    if etype == ENEMY_SLIME() { 30 }\n    else if etype == ENEMY_SKELETON() { 50 }\n    else if etype == ENEMY_GHOST() { 25 }\n    else if etype == ENEMY_BOSS() { 150 }\n    else { 10 }\n}\n\n// Get the contact damage for an enemy type.\nfn enemy_damage(etype: Int) -> Int {\n    if etype == ENEMY_SLIME() { 8 }\n    else if etype == ENEMY_SKELETON() { 15 }\n    else if etype == ENEMY_GHOST() { 12 }\n    else if etype == ENEMY_BOSS() { 25 }\n    else { 5 }\n}\n\n// Get the color for an item type.\nfn item_color(itype: Int) -> Int {\n    if itype == ITEM_HEALTH() { gfx_rgb(255, 80, 80) }\n    else if itype == ITEM_GEM() { gfx_rgb(100, 200, 255) }\n    else if itype == ITEM_KEY() { gfx_rgb(255, 215, 0) }\n    else { gfx_rgb(128, 128, 128) }\n}\n```\n\n**Acceptance Criteria**:\n- `tile_at(some_map, -1, 5)` returns `TILE_WALL()` (1)\n- `tile_at(some_map, 0, 0)` returns the first element of the map array\n- `is_walkable` returns `true` for tiles 0, 2, 3 and `false` for 1, 4, 5\n- `dist(0.0, 0.0, 3.0, 4.0)` returns `5.0`\n- `manhattan(0, 0, 3, 4)` returns `7`\n- All enemy/item attribute functions return documented values\n- Functions match the existing `tile_at` pattern in `examples/raycaster.ryx` (line 57-63)\n- Read `examples/raycaster.ryx` lines 35-63 for the color helper pattern\n\n---\n\n#### T3: Level Data Definitions\n\n**Description**: Define three complete level layouts as functions that return flat tile arrays, plus functions that return enemy spawn data and item spawn data for each level. Each level-loading function populates the shared game arrays.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~231-500 approximately, after T2's section)\n\n**Exact code to write**:\n\n```ryx\n// ---------------------------------------------------------------------------\n// Section 4: Level Data\n// ---------------------------------------------------------------------------\n\n// Level 1: \"The Entrance\" \u2014 tutorial level with simple layout\n// Layout: outer walls, two rooms connected by a corridor\n// Map key: 0=floor, 1=wall, 2=door, 3=exit, 4=wall_variant, 5=water\nfn get_level_1_tiles() -> [Int] {\n    [\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,\n        1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,1,0,0,0,0,0,1,1,1,1,0,0,0,0,1,\n        1,0,0,0,0,2,0,0,0,0,0,1,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,\n        1,1,1,2,1,1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\n    ]\n}\n\n// Level 1 enemies: 3 slimes\n// Returns: [count, type1,x1,y1, type2,x2,y2, ...]\nfn get_level_1_enemies() -> [Int] {\n    [3,  1,3,8,  1,9,2,  1,15,10]\n}\n\n// Level 1 items: 2 health potions, 3 gems\n// Returns: [count, type1,x1,y1, type2,x2,y2, ...]\nfn get_level_1_items() -> [Int] {\n    [5,  1,2,2,  1,14,5,  2,7,7,  2,16,3,  2,10,12]\n}\n\n// Player start position for level 1 (tile coords)\nfn get_level_1_start_x() -> Int { 2 }\nfn get_level_1_start_y() -> Int { 4 }\n\n\n// Level 2: \"The Crypt\" \u2014 more complex layout with water feature\nfn get_level_2_tiles() -> [Int] {\n    [\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,\n        1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,\n        1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,\n        1,0,0,0,2,0,0,4,4,4,4,4,4,0,0,2,0,0,0,1,\n        1,1,1,2,1,0,0,4,5,5,5,5,4,0,0,1,2,1,1,1,\n        1,0,0,0,0,0,0,4,5,5,5,5,4,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,4,5,5,5,5,4,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,4,4,2,2,4,4,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,4,4,0,0,1,1,1,0,0,0,1,1,1,0,0,4,4,0,1,\n        1,0,0,0,0,1,0,0,0,3,0,0,0,1,0,0,0,0,0,1,\n        1,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,1,\n        1,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,0,1,\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\n    ]\n}\n\n// Level 2 enemies: 4 slimes, 2 skeletons, 1 ghost\nfn get_level_2_enemies() -> [Int] {\n    [7,  1,2,1,  1,17,1,  1,2,12,  1,17,12,  2,9,5,  2,10,5,  3,9,9]\n}\n\n// Level 2 items: 3 health potions, 4 gems\nfn get_level_2_items() -> [Int] {\n    [7,  1,1,1,  1,18,1,  1,9,8,  2,3,5,  2,16,5,  2,3,9,  2,16,9]\n}\n\nfn get_level_2_start_x() -> Int { 1 }\nfn get_level_2_start_y() -> Int { 7 }\n\n\n// Level 3: \"The Throne Room\" \u2014 boss level with pillars and side chambers\nfn get_level_3_tiles() -> [Int] {\n    [\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,1,\n        1,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,1,\n        1,1,2,1,0,0,0,0,0,0,0,0,0,0,0,0,1,2,1,1,\n        1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,\n        1,0,0,1,0,0,1,0,0,0,0,0,0,1,0,0,1,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,4,0,0,1,0,0,0,0,0,0,1,0,0,4,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,\n        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\n    ]\n}\n\n// Level 3 enemies: 2 slimes, 2 skeletons, 2 ghosts, 1 boss\nfn get_level_3_enemies() -> [Int] {\n    [7,  1,3,1,  1,16,1,  2,1,12,  2,18,12,  3,5,5,  3,14,5,  4,9,3]\n}\n\n// Level 3 items: 4 health potions, 5 gems\nfn get_level_3_items() -> [Int] {\n    [9,  1,1,1,  1,18,13,  1,1,8,  1,18,8,  2,5,10,  2,14,10,  2,9,12,  2,3,3,  2,16,3]\n}\n\nfn get_level_3_start_x() -> Int { 9 }\nfn get_level_3_start_y() -> Int { 13 }\n\n\n// ---------------------------------------------------------------------------\n// Level loader dispatcher \u2014 returns tile array for given level number (1-3)\n// ---------------------------------------------------------------------------\n\nfn get_level_tiles(level: Int) -> [Int] {\n    if level == 1 { get_level_1_tiles() }\n    else if level == 2 { get_level_2_tiles() }\n    else { get_level_3_tiles() }\n}\n\nfn get_level_enemies(level: Int) -> [Int] {\n    if level == 1 { get_level_1_enemies() }\n    else if level == 2 { get_level_2_enemies() }\n    else { get_level_3_enemies() }\n}\n\nfn get_level_items(level: Int) -> [Int] {\n    if level == 1 { get_level_1_items() }\n    else if level == 2 { get_level_2_items() }\n    else { get_level_3_items() }\n}\n\nfn get_level_start_x(level: Int) -> Int {\n    if level == 1 { get_level_1_start_x() }\n    else if level == 2 { get_level_2_start_x() }\n    else { get_level_3_start_x() }\n}\n\nfn get_level_start_y(level: Int) -> Int {\n    if level == 1 { get_level_1_start_y() }\n    else if level == 2 { get_level_2_start_y() }\n    else { get_level_3_start_y() }\n}\n\n// Total number of levels in the game\nfn total_levels() -> Int { 3 }\n```\n\n**Acceptance Criteria**:\n- Each level tile array has exactly 300 elements (20 * 15)\n- All tile values are in the valid range 0-5\n- Outer border of each level is all walls (tile type 1)\n- Player start positions are on walkable tiles (type 0)\n- Enemy spawn data uses the documented format `[count, type1,x1,y1, ...]`\n- Enemy spawn positions are on walkable tiles\n- Item spawn positions are on walkable tiles and do not overlap enemy spawns\n- Exit tiles (type 3) exist in each level\n- Level 3's exit position is initially blocked or will appear after boss defeat (handled by game logic, not tile data -- the exit tile exists but game logic checks if boss is alive)\n- `get_level_tiles(1)` returns the Level 1 array, etc.\n- Read `examples/raycaster.ryx` lines 88-105 for the flat map array pattern\n\n---\n\n#### T4: Particle System Spawn Helper\n\n**Description**: Define a helper function that spawns particles into the parallel particle arrays. This function is called from the frame callback to create visual effects. Since it modifies shared mutable arrays, it will be called from within the closure in `main()`, but the spawn-pattern helper can be a pure function that computes initial velocity for a particle index.\n\nHowever, since the particle arrays are mutable state inside `main()`, the actual spawning must happen inline. This task defines helper functions for computing particle initial velocities in different patterns.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~501-570 approximately, after T3's section)\n\n**Exact code to write**:\n\n```ryx\n// ---------------------------------------------------------------------------\n// Section 5: Particle Velocity Helpers\n// ---------------------------------------------------------------------------\n\n// Compute the X velocity for a particle in a radial burst pattern.\n// index: which particle in the burst (0..count-1)\n// count: total particles in the burst\n// speed: outward velocity magnitude\nfn burst_vx(index: Int, count: Int, speed: Float) -> Float {\n    let angle = 2.0 * pi() * int_to_float(index) / int_to_float(count);\n    cos(angle) * speed\n}\n\n// Compute the Y velocity for a particle in a radial burst pattern.\nfn burst_vy(index: Int, count: Int, speed: Float) -> Float {\n    let angle = 2.0 * pi() * int_to_float(index) / int_to_float(count);\n    sin(angle) * speed\n}\n\n// Compute the X velocity for an upward spiral particle.\n// index: which particle (0..count-1)\n// count: total particles\n// spread: horizontal spread factor\nfn spiral_vx(index: Int, count: Int, spread: Float) -> Float {\n    let angle = 2.0 * pi() * int_to_float(index) / int_to_float(count);\n    cos(angle) * spread\n}\n\n// Compute the Y velocity for an upward spiral particle (negative = upward).\nfn spiral_vy(index: Int, count: Int, base_speed: Float) -> Float {\n    0.0 - base_speed - int_to_float(index) * 0.1\n}\n\n// Compute the X velocity for a semicircular attack effect.\n// center_angle: direction of the attack (radians)\n// index: which particle (0..count-1)\n// count: total particles\n// speed: outward velocity\nfn attack_vx(center_angle: Float, index: Int, count: Int, speed: Float) -> Float {\n    let spread = pi() * 0.6;  // 108 degree arc\n    let start_angle = center_angle - spread / 2.0;\n    let angle = start_angle + spread * int_to_float(index) / int_to_float(max(1, count - 1));\n    cos(angle) * speed\n}\n\n// Compute the Y velocity for a semicircular attack effect.\nfn attack_vy(center_angle: Float, index: Int, count: Int, speed: Float) -> Float {\n    let spread = pi() * 0.6;\n    let start_angle = center_angle - spread / 2.0;\n    let angle = start_angle + spread * int_to_float(index) / int_to_float(max(1, count - 1));\n    sin(angle) * speed\n}\n```\n\n**Acceptance Criteria**:\n- `burst_vx(0, 8, 2.0)` returns approximately `2.0` (cos(0) * 2.0)\n- `burst_vy(0, 8, 2.0)` returns approximately `0.0` (sin(0) * 2.0)\n- `burst_vx(2, 8, 2.0)` returns approximately `0.0` (cos(pi/2) * 2.0)\n- `spiral_vy` always returns a negative value (upward motion)\n- `attack_vx` and `attack_vy` distribute particles across a semicircular arc centered on `center_angle`\n- All functions are pure (no state mutation), take only primitive arguments, return Float\n- No division by zero: `max(1, count - 1)` guard is present\n- Read `examples/raycaster.ryx` for the math function call pattern (sin, cos, pi)\n\n---\n\n### Wave 2 \u2014 Core Game State & Level Loading (T5-T7, T5 first, then T6-T7 parallel)\n\nThese tasks implement the `fn main()` function's opening section: declaring all mutable game state variables and the level-loading logic.\n\n---\n\n#### T5: Main Function Opening \u2014 All Mutable State Declaration\n\n**Description**: Write the opening of `fn main()` that declares ALL mutable game state variables using `let mut`. This includes player state, enemy parallel arrays, item parallel arrays, particle parallel arrays, game-state variables, and timing variables. This is the single largest variable declaration section and must be written carefully because all subsequent tasks reference these variable names.\n\nAll arrays must be initialized to the correct length using array literals. Since Ryx requires explicit array literals (no `Array.new(n)` constructor), each array must be written out with the required number of elements.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~571-820 approximately, the beginning of `fn main()`)\n\n**Important**: Every mutable variable name defined here is part of the game's API contract. All subsequent tasks (T6-T18) reference these names. Getting a name wrong will cause cascading compilation failures.\n\n**Exact code to write**:\n\n```ryx\n// ===========================================================================\n// MAIN \u2014 Entry point and game loop\n// ===========================================================================\nfn main() {\n\n    // -----------------------------------------------------------------------\n    // Section 6: Mutable Game State\n    // -----------------------------------------------------------------------\n\n    // --- Game state machine ---\n    let mut game_state = 0;  // STATE_TITLE\n    let mut current_level = 1;\n    let mut score = 0;\n    let mut total_score = 0;\n    let mut level_transition_timer = 0.0;\n\n    // --- Player state ---\n    let mut player_x = 2.0;       // tile X (float for smooth movement)\n    let mut player_y = 4.0;       // tile Y (float for smooth movement)\n    let mut player_target_x = 2;  // target tile X (int)\n    let mut player_target_y = 4;  // target tile Y (int)\n    let mut player_moving = false;\n    let mut player_move_progress = 0.0;  // 0.0 to 1.0 during movement\n    let mut player_start_x = 2.0;  // movement start position\n    let mut player_start_y = 4.0;\n    let mut player_hp = 100;\n    let mut player_facing = 0;    // 0=right, 1=down, 2=left, 3=up\n    let mut player_attack_timer = 0.0;  // cooldown remaining\n    let mut player_damage_flash = 0.0;  // flash timer for damage feedback\n    let mut player_invuln_timer = 0.0;  // brief invulnerability after hit\n\n    // --- Map tiles (20x15 = 300 elements) ---\n    let mut tiles = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n\n    // --- Enemy parallel arrays (max 32) ---\n    let mut enemy_x = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut enemy_y = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut enemy_type = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n    let mut enemy_hp = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n    let mut enemy_alive = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n    let mut enemy_dir = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut enemy_timer = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut enemy_count = 0;\n\n    // --- Particle parallel arrays (max 64) ---\n    let mut part_x = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut part_y = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut part_vx = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut part_vy = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut part_life = [\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0\n    ];\n    let mut part_color = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n    let mut part_active = [\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\n        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n    ];\n\n    // --- Item parallel arrays (max 16) ---\n    let mut item_x = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];\n    let mut item_y = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];\n    let mut item_type = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];\n    let mut item_active = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];\n    let mut item_count = 0;\n\n    // --- Boss state ---\n    let mut boss_spawned_minions = false;\n    let mut boss_alive = false;\n    let mut exit_unlocked = true;  // false on level 3 until boss dies\n\n    // --- Wall textures (loaded once, -1 means not loaded) ---\n    let wall_img = gfx_load_image(\"examples/assets/wall_stone.png\");\n    let wall2_img = gfx_load_image(\"examples/assets/wall_moss.png\");\n\n    // --- Initialize graphics ---\n    gfx_init(screen_w(), screen_h(), \"Ryx Dungeon Crawler\");\n```\n\n**Acceptance Criteria**:\n- All array sizes match their documented constants: `tiles` = 300, enemy arrays = 32, particle arrays = 64, item arrays = 16\n- All arrays use the correct element type (Float arrays use `0.0`, Int arrays use `0`)\n- Variable names exactly match the names used in subsequent tasks (T6-T18)\n- No syntax errors: every `let mut` statement ends with `;`\n- `gfx_load_image` calls use the documented asset paths\n- `gfx_init` is called with 640, 480 dimensions\n- Read `examples/raycaster.ryx` lines 69-134 for the pattern of mutable state declaration inside `main()`\n\n---\n\n#### T6: Level Loading Logic (depends on T5)\n\n**Description**: Implement the level-loading procedure that populates the `tiles`, enemy, and item arrays from the level data functions. This code runs once at game start and again when transitioning between levels. It is implemented as inline code inside the frame callback, triggered when `game_state` transitions to `STATE_PLAYING`.\n\nHowever, for reuse, this task also writes a section of code right after the state declarations (but still inside `main()`, before the frame closure) that performs the initial level load.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~821-920 approximately, continuing inside `fn main()`)\n\n**Exact code to write**:\n\n```ryx\n    // -----------------------------------------------------------------------\n    // Section 7: Initial Level Load\n    // -----------------------------------------------------------------------\n    // Load level 1 data into the mutable state arrays.\n    // This same pattern is repeated in the frame callback when transitioning levels.\n\n    // Load tile data\n    let level_tiles = get_level_tiles(current_level);\n    let mut ti = 0;\n    while ti < map_len() {\n        tiles[ti] = level_tiles[ti];\n        ti = ti + 1\n    };\n\n    // Load enemy data\n    let level_enemies = get_level_enemies(current_level);\n    enemy_count = level_enemies[0];\n    let mut ei = 0;\n    while ei < enemy_count {\n        let base = 1 + ei * 3;\n        enemy_type[ei] = level_enemies[base];\n        enemy_x[ei] = int_to_float(level_enemies[base + 1]) + 0.5;\n        enemy_y[ei] = int_to_float(level_enemies[base + 2]) + 0.5;\n        enemy_hp[ei] = enemy_max_hp(level_enemies[base]);\n        enemy_alive[ei] = 1;\n        enemy_dir[ei] = 0.0;\n        enemy_timer[ei] = 0.0;\n        ei = ei + 1\n    };\n    // Clear remaining enemy slots\n    while ei < MAX_ENEMIES() {\n        enemy_alive[ei] = 0;\n        enemy_type[ei] = 0;\n        ei = ei + 1\n    };\n\n    // Load item data\n    let level_items = get_level_items(current_level);\n    item_count = level_items[0];\n    let mut ii = 0;\n    while ii < item_count {\n        let ibase = 1 + ii * 3;\n        item_type[ii] = level_items[ibase];\n        item_x[ii] = level_items[ibase + 1];\n        item_y[ii] = level_items[ibase + 2];\n        item_active[ii] = 1;\n        ii = ii + 1\n    };\n    // Clear remaining item slots\n    while ii < MAX_ITEMS() {\n        item_active[ii] = 0;\n        item_type[ii] = 0;\n        ii = ii + 1\n    };\n\n    // Set player start position\n    player_x = int_to_float(get_level_start_x(current_level)) + 0.5;\n    player_y = int_to_float(get_level_start_y(current_level)) + 0.5;\n    player_target_x = get_level_start_x(current_level);\n    player_target_y = get_level_start_y(current_level);\n    player_start_x = player_x;\n    player_start_y = player_y;\n    player_moving = false;\n    player_move_progress = 0.0;\n\n    // Boss state for level 3\n    boss_spawned_minions = false;\n    boss_alive = false;\n    exit_unlocked = true;\n    if current_level == 3 {\n        exit_unlocked = false;\n        // Check if there is a boss enemy\n        let mut bi = 0;\n        while bi < enemy_count {\n            if enemy_type[bi] == ENEMY_BOSS() {\n                boss_alive = true\n            };\n            bi = bi + 1\n        }\n    };\n\n    // Clear all particles\n    let mut pi = 0;\n    while pi < MAX_PARTICLES() {\n        part_active[pi] = 0;\n        pi = pi + 1\n    };\n```\n\n**Acceptance Criteria**:\n- After execution, `tiles` array contains Level 1's tile data\n- Enemy arrays are populated with 3 slimes at the documented positions, with HP set from `enemy_max_hp`\n- Enemy positions have +0.5 offset (center of tile)\n- Remaining enemy slots (indices 3-31) have `enemy_alive[i] = 0`\n- Item arrays are populated with 5 items at documented positions\n- Player position matches `get_level_1_start_x()` + 0.5\n- `boss_alive` is `false` for level 1\n- `exit_unlocked` is `true` for level 1\n- All particles are inactive\n- Read `examples/raycaster.ryx` lines 108-125 for the array-mutation pattern\n\n---\n\n#### T7: Frame Callback Opening \u2014 Delta Time & State Machine (depends on T5)\n\n**Description**: Write the frame callback closure and its opening: delta-time computation, ESC handling, and the top-level game-state dispatch. This establishes the skeleton that all subsequent gameplay tasks fill in.\n\n**File**: `examples/dungeon_crawler.ryx` (lines ~921-990 approximately, continuing inside `fn main()`)\n\n**Exact code to write**:\n\n```ryx\n    // -----------------------------------------------------------------------\n    // Section 8: Frame Callback\n    // -----------------------------------------------------------------------\n    let frame = || {\n\n        // Delta time for frame-rate independence\n        let raw_dt = gfx_delta_time();\n        let dt = if raw_dt <= 0.0 { 1.0 / 60.0 } else { raw_dt };\n\n        // Global ESC handling\n        if gfx_key_just_pressed(KEY_ESCAPE()) {\n            if game_state == STATE_PLAYING() {\n                game_state = STATE_PAUSED()\n            } else if game_state == STATE_PAUSED() {\n                game_state = STATE_PLAYING()\n            } else {\n                gfx_quit()\n            }\n        };\n\n        // ===================================================================\n        // STATE DISPATCH\n        // ===================================================================\n\n        if game_state == STATE_TITLE() {\n            // --- TITLE SCREEN (T9) ---\n            // [Title screen rendering code goes here]\n            ()  // placeholder\n\n        } else if game_state == STATE_PLAYING() {\n            // --- GAMEPLAY ---\n\n            // [T10: Player input & movement]\n            // [T11: Enemy AI & movement]\n            // [T12: Combat \u2014 player attack]\n            // [T13: Combat \u2014 enemy contact damage]\n            // [T14: Item pickup]\n            // [T15: Particle update]\n            // [T16: Tile rendering]\n            // [T16: Entity rendering]\n            // [T16: Particle rendering]\n            // [T17: HUD rendering]\n            // [T17: Minimap rendering]\n            // [Level completion check]\n\n            ()  // placeholder\n\n        } else if game_state == STATE_GAME_OVER() {\n            // --- GAME OVER SCREEN (T9) ---\n            ()  // placeholder\n\n        } else if game_state == STATE_LEVEL_COMPLETE() {\n            // --- LEVEL TRANSITION (T9) ---\n            ()  // placeholder\n\n        } else if game_state == STATE_VICTORY() {\n            // --- VICTORY SCREEN (T9) ---\n            ()  // placeholder\n\n        } else if game_state == STATE_PAUSED() {\n            // --- PAUSE OVERLAY (T9) ---\n            ()  // placeholder\n        }\n    };\n\n    // Start the game loop\n    gfx_run(frame)\n}\n```\n\n**Note to workers**: The placeholder `()` expressions and `// [Tx: ...]` comments indicate where subsequent tasks will insert their code. When implementing tasks T9-T17, replace the placeholder and comments in the appropriate branch with the actual implementation.\n\n**Acceptance Criteria**:\n- The frame callback closure compiles and can be passed to `gfx_run`\n- Delta time defaults to 1/60 second when `gfx_delta_time()` returns 0 or negative\n- ESC toggles between `STATE_PLAYING` and `STATE_PAUSED`\n- ESC from any other state calls `gfx_quit()`\n- State dispatch covers all 6 game states\n- The overall structure (opening of `main`, state, frame closure, `gfx_run`) matches the pattern in `examples/raycaster.ryx` lines 138-489\n- The closing `}` of `fn main()` is present and the file is syntactically complete\n\n---\n\n### Wave 3 \u2014 Gameplay Mechanics (T8-T14, dependencies noted)\n\nThese tasks implement the core gameplay: movement, AI, combat, items, and particles. They all write code inside the `game_state == STATE_PLAYING()` branch of the frame callback.\n\n---\n\n#### T8: Level Reload Logic Inside Frame Callback (depends on T6, T7)\n\n**Description**: Implement the inline level-reload logic that runs inside the frame callback when transitioning from `STATE_LEVEL_COMPLETE` to `STATE_PLAYING` for the next level. This duplicates the pattern from T6 but runs inside the closure. Also implement the level-completion detection logic (checking if all enemies are dead and player is on exit tile, or if boss is dead on level 3).\n\nThis code goes inside the `STATE_LEVEL_COMPLETE` branch AND at the end of the `STATE_PLAYING` branch.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the frame callback's `STATE_LEVEL_COMPLETE` branch and end of `STATE_PLAYING` branch\n\n**Code for STATE_LEVEL_COMPLETE branch** (replaces the placeholder):\n\n```ryx\n            // Level transition animation\n            gfx_set_color(gfx_rgb(0, 0, 0));\n            gfx_fill_rect(0, 0, screen_w(), screen_h());\n\n            gfx_set_color(gfx_rgb(100, 255, 100));\n            gfx_text(220, 180, \"LEVEL \" ++ int_to_string(current_level) ++ \" COMPLETE!\");\n\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(250, 230, \"Score: \" ++ int_to_string(score));\n\n            level_transition_timer = level_transition_timer - dt;\n\n            if level_transition_timer <= 0.0 {\n                current_level = current_level + 1;\n\n                if current_level > total_levels() {\n                    game_state = STATE_VICTORY()\n                } else {\n                    // Reload level data (same pattern as initial load in Section 7)\n                    let new_tiles = get_level_tiles(current_level);\n                    let mut lti = 0;\n                    while lti < map_len() {\n                        tiles[lti] = new_tiles[lti];\n                        lti = lti + 1\n                    };\n\n                    let new_enemies = get_level_enemies(current_level);\n                    enemy_count = new_enemies[0];\n                    let mut lei = 0;\n                    while lei < enemy_count {\n                        let ebase = 1 + lei * 3;\n                        enemy_type[lei] = new_enemies[ebase];\n                        enemy_x[lei] = int_to_float(new_enemies[ebase + 1]) + 0.5;\n                        enemy_y[lei] = int_to_float(new_enemies[ebase + 2]) + 0.5;\n                        enemy_hp[lei] = enemy_max_hp(new_enemies[ebase]);\n                        enemy_alive[lei] = 1;\n                        enemy_dir[lei] = 0.0;\n                        enemy_timer[lei] = 0.0;\n                        lei = lei + 1\n                    };\n                    while lei < MAX_ENEMIES() {\n                        enemy_alive[lei] = 0;\n                        enemy_type[lei] = 0;\n                        lei = lei + 1\n                    };\n\n                    let new_items = get_level_items(current_level);\n                    item_count = new_items[0];\n                    let mut lii = 0;\n                    while lii < item_count {\n                        let ibase = 1 + lii * 3;\n                        item_type[lii] = new_items[ibase];\n                        item_x[lii] = new_items[ibase + 1];\n                        item_y[lii] = new_items[ibase + 2];\n                        item_active[lii] = 1;\n                        lii = lii + 1\n                    };\n                    while lii < MAX_ITEMS() {\n                        item_active[lii] = 0;\n                        item_type[lii] = 0;\n                        lii = lii + 1\n                    };\n\n                    player_x = int_to_float(get_level_start_x(current_level)) + 0.5;\n                    player_y = int_to_float(get_level_start_y(current_level)) + 0.5;\n                    player_target_x = get_level_start_x(current_level);\n                    player_target_y = get_level_start_y(current_level);\n                    player_start_x = player_x;\n                    player_start_y = player_y;\n                    player_moving = false;\n                    player_move_progress = 0.0;\n\n                    boss_spawned_minions = false;\n                    boss_alive = false;\n                    exit_unlocked = true;\n                    if current_level == 3 {\n                        exit_unlocked = false;\n                        let mut bci = 0;\n                        while bci < enemy_count {\n                            if enemy_type[bci] == ENEMY_BOSS() {\n                                boss_alive = true\n                            };\n                            bci = bci + 1\n                        }\n                    };\n\n                    let mut pci = 0;\n                    while pci < MAX_PARTICLES() {\n                        part_active[pci] = 0;\n                        pci = pci + 1\n                    };\n\n                    game_state = STATE_PLAYING()\n                }\n            }\n```\n\n**Code for end of STATE_PLAYING branch** (level completion check, goes after all gameplay logic):\n\n```ryx\n            // --- Level completion check ---\n            // Count alive enemies\n            let mut alive_count = 0;\n            let mut aci = 0;\n            while aci < enemy_count {\n                if enemy_alive[aci] == 1 {\n                    alive_count = alive_count + 1\n                };\n                aci = aci + 1\n            };\n\n            // On level 3, check if boss is dead to unlock exit\n            if current_level == 3 && boss_alive {\n                let mut boss_dead = true;\n                let mut bdi = 0;\n                while bdi < enemy_count {\n                    if enemy_type[bdi] == ENEMY_BOSS() && enemy_alive[bdi] == 1 {\n                        boss_dead = false\n                    };\n                    bdi = bdi + 1\n                };\n                if boss_dead {\n                    boss_alive = false;\n                    exit_unlocked = true;\n                    // Reveal exit: set tile at (9, 7) to EXIT\n                    tiles[7 * map_cols() + 9] = TILE_EXIT()\n                }\n            };\n\n            // Check if player is standing on exit tile and exit is unlocked\n            let player_tile_x = float_to_int(floor(player_x));\n            let player_tile_y = float_to_int(floor(player_y));\n            if exit_unlocked && tile_at(tiles, player_tile_x, player_tile_y) == TILE_EXIT() {\n                total_score = total_score + score;\n                level_transition_timer = 2.0;\n                game_state = STATE_LEVEL_COMPLETE()\n            }\n```\n\n**Acceptance Criteria**:\n- Level transition timer counts down from 2.0 seconds\n- When timer expires, `current_level` increments and level data is reloaded\n- If `current_level > 3`, transition to `STATE_VICTORY`\n- Level 3 exit only unlocks when boss enemy dies (boss_alive becomes false)\n- Exit tile appears at position (9, 7) on level 3 when boss dies\n- Player standing on exit tile triggers `STATE_LEVEL_COMPLETE`\n- Score is accumulated into `total_score` across levels\n- All arrays are fully reset during level transition (no stale data)\n\n---\n\n#### T9: Menu Screens \u2014 Title, Game Over, Victory, Pause (depends on T7)\n\n**Description**: Implement all non-gameplay screens: title screen, game over screen, victory screen, and pause overlay. Each screen clears the display, draws centered text, and waits for ENTER (or handles restart logic).\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 replaces placeholders in the frame callback's `STATE_TITLE`, `STATE_GAME_OVER`, `STATE_VICTORY`, and `STATE_PAUSED` branches\n\n**Code for STATE_TITLE** (replaces placeholder):\n\n```ryx\n            // Title screen\n            gfx_set_color(gfx_rgb(0, 0, 0));\n            gfx_fill_rect(0, 0, screen_w(), screen_h());\n\n            // Title text\n            gfx_set_color(gfx_rgb(200, 170, 80));\n            gfx_text(180, 150, \"RYX DUNGEON CRAWLER\");\n\n            // Subtitle\n            gfx_set_color(gfx_rgb(160, 160, 160));\n            gfx_text(200, 200, \"A Roguelike-Lite Demo\");\n\n            // Controls info\n            gfx_set_color(gfx_rgb(120, 120, 120));\n            gfx_text(200, 260, \"WASD/Arrows - Move\");\n            gfx_text(200, 280, \"SPACE - Attack\");\n            gfx_text(200, 300, \"ESC - Pause/Quit\");\n\n            // Start prompt (blinking effect using frame count approximation)\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(210, 360, \"Press ENTER to start\");\n\n            if gfx_key_just_pressed(KEY_ENTER()) {\n                game_state = STATE_PLAYING()\n            }\n```\n\n**Code for STATE_GAME_OVER** (replaces placeholder):\n\n```ryx\n            // Game over screen\n            gfx_set_color(gfx_rgb(0, 0, 0));\n            gfx_fill_rect(0, 0, screen_w(), screen_h());\n\n            gfx_set_color(gfx_rgb(200, 50, 50));\n            gfx_text(240, 160, \"GAME OVER\");\n\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(220, 220, \"Level: \" ++ int_to_string(current_level));\n            gfx_text(220, 250, \"Score: \" ++ int_to_string(total_score + score));\n\n            gfx_set_color(gfx_rgb(160, 160, 160));\n            gfx_text(190, 320, \"Press ENTER to restart\");\n\n            if gfx_key_just_pressed(KEY_ENTER()) {\n                // Full game reset\n                current_level = 1;\n                score = 0;\n                total_score = 0;\n                player_hp = PLAYER_MAX_HP();\n                player_damage_flash = 0.0;\n                player_invuln_timer = 0.0;\n                player_attack_timer = 0.0;\n                boss_spawned_minions = false;\n\n                // Reload level 1\n                let rst_tiles = get_level_tiles(1);\n                let mut rti = 0;\n                while rti < map_len() {\n                    tiles[rti] = rst_tiles[rti];\n                    rti = rti + 1\n                };\n\n                let rst_enemies = get_level_enemies(1);\n                enemy_count = rst_enemies[0];\n                let mut rei = 0;\n                while rei < enemy_count {\n                    let rebase = 1 + rei * 3;\n                    enemy_type[rei] = rst_enemies[rebase];\n                    enemy_x[rei] = int_to_float(rst_enemies[rebase + 1]) + 0.5;\n                    enemy_y[rei] = int_to_float(rst_enemies[rebase + 2]) + 0.5;\n                    enemy_hp[rei] = enemy_max_hp(rst_enemies[rebase]);\n                    enemy_alive[rei] = 1;\n                    enemy_dir[rei] = 0.0;\n                    enemy_timer[rei] = 0.0;\n                    rei = rei + 1\n                };\n                while rei < MAX_ENEMIES() {\n                    enemy_alive[rei] = 0;\n                    enemy_type[rei] = 0;\n                    rei = rei + 1\n                };\n\n                let rst_items = get_level_items(1);\n                item_count = rst_items[0];\n                let mut rii = 0;\n                while rii < item_count {\n                    let ribase = 1 + rii * 3;\n                    item_type[rii] = rst_items[ribase];\n                    item_x[rii] = rst_items[ribase + 1];\n                    item_y[rii] = rst_items[ribase + 2];\n                    item_active[rii] = 1;\n                    rii = rii + 1\n                };\n                while rii < MAX_ITEMS() {\n                    item_active[rii] = 0;\n                    item_type[rii] = 0;\n                    rii = rii + 1\n                };\n\n                player_x = int_to_float(get_level_start_x(1)) + 0.5;\n                player_y = int_to_float(get_level_start_y(1)) + 0.5;\n                player_target_x = get_level_start_x(1);\n                player_target_y = get_level_start_y(1);\n                player_start_x = player_x;\n                player_start_y = player_y;\n                player_moving = false;\n\n                boss_alive = false;\n                exit_unlocked = true;\n\n                let mut rpi = 0;\n                while rpi < MAX_PARTICLES() {\n                    part_active[rpi] = 0;\n                    rpi = rpi + 1\n                };\n\n                game_state = STATE_TITLE()\n            }\n```\n\n**Code for STATE_VICTORY** (replaces placeholder):\n\n```ryx\n            // Victory screen\n            gfx_set_color(gfx_rgb(0, 0, 0));\n            gfx_fill_rect(0, 0, screen_w(), screen_h());\n\n            gfx_set_color(gfx_rgb(255, 215, 0));\n            gfx_text(180, 140, \"VICTORY!\");\n\n            gfx_set_color(gfx_rgb(200, 200, 200));\n            gfx_text(140, 190, \"You cleared all three dungeons!\");\n\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(210, 240, \"Final Score: \" ++ int_to_string(total_score));\n\n            gfx_set_color(gfx_rgb(160, 160, 160));\n            gfx_text(190, 320, \"Press ENTER to play again\");\n\n            if gfx_key_just_pressed(KEY_ENTER()) {\n                current_level = 1;\n                score = 0;\n                total_score = 0;\n                player_hp = PLAYER_MAX_HP();\n                game_state = STATE_TITLE()\n            }\n```\n\n**Code for STATE_PAUSED** (replaces placeholder):\n\n```ryx\n            // Pause overlay \u2014 draw semi-transparent black over the existing frame\n            gfx_set_color(gfx_rgba(0, 0, 0, 160));\n            gfx_fill_rect(0, 0, screen_w(), screen_h());\n\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(270, 200, \"PAUSED\");\n\n            gfx_set_color(gfx_rgb(160, 160, 160));\n            gfx_text(210, 260, \"Press ESC to resume\");\n            gfx_text(210, 280, \"Press ENTER to quit\");\n\n            if gfx_key_just_pressed(KEY_ENTER()) {\n                gfx_quit()\n            }\n```\n\n**Acceptance Criteria**:\n- Title screen displays game name, controls, and \"Press ENTER to start\"\n- Pressing ENTER on title transitions to `STATE_PLAYING`\n- Game over screen shows level and total score, ENTER restarts from level 1\n- Victory screen shows final score, ENTER returns to title\n- Pause overlay is semi-transparent, ESC resumes, ENTER quits\n- Full reset on game-over restores all state to level 1 initial values\n- Read `examples/raycaster.ryx` lines 145-161 for the title screen pattern\n- Read `examples/raycaster.ryx` lines 451-484 for the win screen / restart pattern\n\n---\n\n#### T10: Player Input and Movement (depends on T5, T7)\n\n**Description**: Implement player movement with grid-aligned smooth interpolation. When the player presses a direction key and is not currently moving, check if the destination tile is walkable, then start a smooth slide over `PLAYER_MOVE_TIME()` seconds. The player's float position interpolates linearly from the start tile center to the target tile center. Also handle the player facing direction.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, replacing the `// [T10]` placeholder\n\n**Algorithm**:\n1. If `player_moving` is `true`:\n   - Increment `player_move_progress` by `dt / PLAYER_MOVE_TIME()`\n   - If `player_move_progress >= 1.0`:\n     - Set `player_x` = target x + 0.5, `player_y` = target y + 0.5\n     - Set `player_moving = false`, `player_move_progress = 0.0`\n   - Else: linearly interpolate `player_x` and `player_y` between start and target\n2. If `player_moving` is `false`:\n   - Check WASD/arrow keys (prioritize W, then S, then A, then D)\n   - Compute `nx, ny` = target tile position\n   - If `is_walkable(tiles, nx, ny)`: start movement\n     - Set `player_start_x = player_x`, `player_start_y = player_y`\n     - Set `player_target_x = nx`, `player_target_y = ny`\n     - Set `player_moving = true`, `player_move_progress = 0.0`\n     - Set `player_facing` based on direction (0=right, 1=down, 2=left, 3=up)\n\n**Exact code to write**:\n\n```ryx\n            // --- Player movement ---\n            if player_moving {\n                player_move_progress = player_move_progress + dt / PLAYER_MOVE_TIME();\n                if player_move_progress >= 1.0 {\n                    player_x = int_to_float(player_target_x) + 0.5;\n                    player_y = int_to_float(player_target_y) + 0.5;\n                    player_moving = false;\n                    player_move_progress = 0.0\n                } else {\n                    let tx = int_to_float(player_target_x) + 0.5;\n                    let ty = int_to_float(player_target_y) + 0.5;\n                    player_x = player_start_x + (tx - player_start_x) * player_move_progress;\n                    player_y = player_start_y + (ty - player_start_y) * player_move_progress\n                }\n            } else {\n                let cur_tx = float_to_int(floor(player_x));\n                let cur_ty = float_to_int(floor(player_y));\n\n                if gfx_key_pressed(KEY_W()) || gfx_key_pressed(KEY_UP()) {\n                    let nx = cur_tx;\n                    let ny = cur_ty - 1;\n                    if is_walkable(tiles, nx, ny) {\n                        player_start_x = player_x;\n                        player_start_y = player_y;\n                        player_target_x = nx;\n                        player_target_y = ny;\n                        player_moving = true;\n                        player_move_progress = 0.0;\n                        player_facing = 3\n                    }\n                } else if gfx_key_pressed(KEY_S()) || gfx_key_pressed(KEY_DOWN()) {\n                    let nx = cur_tx;\n                    let ny = cur_ty + 1;\n                    if is_walkable(tiles, nx, ny) {\n                        player_start_x = player_x;\n                        player_start_y = player_y;\n                        player_target_x = nx;\n                        player_target_y = ny;\n                        player_moving = true;\n                        player_move_progress = 0.0;\n                        player_facing = 1\n                    }\n                } else if gfx_key_pressed(KEY_A()) || gfx_key_pressed(KEY_LEFT()) {\n                    let nx = cur_tx - 1;\n                    let ny = cur_ty;\n                    if is_walkable(tiles, nx, ny) {\n                        player_start_x = player_x;\n                        player_start_y = player_y;\n                        player_target_x = nx;\n                        player_target_y = ny;\n                        player_moving = true;\n                        player_move_progress = 0.0;\n                        player_facing = 2\n                    }\n                } else if gfx_key_pressed(KEY_D()) || gfx_key_pressed(KEY_RIGHT()) {\n                    let nx = cur_tx + 1;\n                    let ny = cur_ty;\n                    if is_walkable(tiles, nx, ny) {\n                        player_start_x = player_x;\n                        player_start_y = player_y;\n                        player_target_x = nx;\n                        player_target_y = ny;\n                        player_moving = true;\n                        player_move_progress = 0.0;\n                        player_facing = 0\n                    }\n                }\n            };\n\n            // Decrement attack cooldown\n            if player_attack_timer > 0.0 {\n                player_attack_timer = player_attack_timer - dt\n            };\n\n            // Decrement damage flash\n            if player_damage_flash > 0.0 {\n                player_damage_flash = player_damage_flash - dt\n            };\n\n            // Decrement invulnerability\n            if player_invuln_timer > 0.0 {\n                player_invuln_timer = player_invuln_timer - dt\n            };\n```\n\n**Acceptance Criteria**:\n- Player moves smoothly from one tile to the next over 0.15 seconds\n- Player cannot move to wall tiles (type 1, 4, 5)\n- Player can walk through doors (type 2) and onto exit (type 3)\n- Only one movement key is processed at a time (no diagonal movement)\n- `player_facing` correctly tracks the last movement direction\n- Movement starts only when the player is not already moving\n- Timer decrements (attack cooldown, damage flash, invulnerability) happen every frame\n- Read `examples/raycaster.ryx` lines 178-250 for the key-press movement pattern\n\n---\n\n#### T11: Enemy AI and Movement (depends on T5, T7)\n\n**Description**: Implement enemy AI with two behaviors: patrol (random movement when player is far away) and chase (move toward player when in detection range). Ghosts ignore wall collision. The boss spawns minion slimes when its HP drops below 50%. Each enemy moves at its type-specific speed.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after player movement code (T10)\n\n**Algorithm for each enemy**:\n1. If `enemy_alive[i] == 0`, skip\n2. Compute distance from enemy position to player position using `dist()`\n3. If distance < `enemy_detect_range(enemy_type[i])`:\n   - **Chase mode**: compute direction vector from enemy to player\n   - Normalize: `dx = (player_x - enemy_x[i]) / d`, `dy = (player_y - enemy_y[i]) / d`\n   - Move: `new_x = enemy_x[i] + dx * speed * dt`, `new_y = enemy_y[i] + dy * speed * dt`\n   - For non-ghost enemies: check if new position is walkable before moving (convert to tile coords and check `is_walkable`)\n   - For ghosts (type 3): skip walkability check, move through walls\n   - Special for skeletons (type 2): if HP < 15, reverse direction (retreat instead of chase)\n4. If distance >= detect range:\n   - **Patrol mode**: use `enemy_timer` as a countdown. When timer <= 0:\n     - Pick a new random direction: `enemy_dir[i] = random_float() * 2.0 * pi()`\n     - Reset timer to 1.0 + random_float() * 2.0 (1-3 seconds)\n   - Move in current direction at 50% speed\n   - Check walkability for non-ghost enemies; if blocked, pick a new direction immediately\n5. Boss special: if `enemy_type[i] == ENEMY_BOSS()` and `enemy_hp[i] < 75` and `!boss_spawned_minions`:\n   - Spawn 2 slimes at positions near the boss\n   - Set `boss_spawned_minions = true`\n\n**Exact code to write**:\n\n```ryx\n            // --- Enemy AI and movement ---\n            let mut eai = 0;\n            while eai < enemy_count {\n                if enemy_alive[eai] == 1 {\n                    let etype = enemy_type[eai];\n                    let espeed = enemy_speed(etype) * dt;\n                    let erange = enemy_detect_range(etype);\n                    let ex = enemy_x[eai];\n                    let ey = enemy_y[eai];\n                    let d = dist(ex, ey, player_x, player_y);\n\n                    if d < erange && d > 0.01 {\n                        // Chase mode\n                        let dx = (player_x - ex) / d;\n                        let dy = (player_y - ey) / d;\n\n                        // Skeleton retreat when low HP\n                        let chase_dx = if etype == ENEMY_SKELETON() && enemy_hp[eai] < 15 {\n                            0.0 - dx\n                        } else { dx };\n                        let chase_dy = if etype == ENEMY_SKELETON() && enemy_hp[eai] < 15 {\n                            0.0 - dy\n                        } else { dy };\n\n                        let new_ex = ex + chase_dx * espeed;\n                        let new_ey = ey + chase_dy * espeed;\n\n                        if etype == ENEMY_GHOST() {\n                            // Ghosts move through walls\n                            enemy_x[eai] = new_ex;\n                            enemy_y[eai] = new_ey\n                        } else {\n                            // Check walkability for each axis independently\n                            let ntx = float_to_int(floor(new_ex));\n                            let nty = float_to_int(floor(new_ey));\n                            let otx = float_to_int(floor(ex));\n                            let oty = float_to_int(floor(ey));\n\n                            if is_walkable(tiles, ntx, oty) {\n                                enemy_x[eai] = new_ex\n                            };\n                            if is_walkable(tiles, otx, nty) {\n                                enemy_y[eai] = new_ey\n                            }\n                        }\n                    } else {\n                        // Patrol mode\n                        enemy_timer[eai] = enemy_timer[eai] - dt;\n                        if enemy_timer[eai] <= 0.0 {\n                            enemy_dir[eai] = random_float() * 2.0 * pi();\n                            enemy_timer[eai] = 1.0 + random_float() * 2.0\n                        };\n\n                        let patrol_speed = espeed * 0.5;\n                        let pdx = cos(enemy_dir[eai]) * patrol_speed;\n                        let pdy = sin(enemy_dir[eai]) * patrol_speed;\n                        let pnx = ex + pdx;\n                        let pny = ey + pdy;\n\n                        if etype == ENEMY_GHOST() {\n                            enemy_x[eai] = pnx;\n                            enemy_y[eai] = pny\n                        } else {\n                            let ptx = float_to_int(floor(pnx));\n                            let pty = float_to_int(floor(pny));\n                            if is_walkable(tiles, ptx, float_to_int(floor(ey))) {\n                                enemy_x[eai] = pnx\n                            } else {\n                                enemy_dir[eai] = random_float() * 2.0 * pi()\n                            };\n                            if is_walkable(tiles, float_to_int(floor(ex)), pty) {\n                                enemy_y[eai] = pny\n                            } else {\n                                enemy_dir[eai] = random_float() * 2.0 * pi()\n                            }\n                        }\n                    };\n\n                    // Boss special: spawn minions at 50% HP\n                    if etype == ENEMY_BOSS() && !boss_spawned_minions {\n                        if enemy_hp[eai] < 75 {\n                            boss_spawned_minions = true;\n                            // Spawn 2 slimes near boss if there are open slots\n                            if enemy_count < MAX_ENEMIES() - 1 {\n                                let spawn_idx1 = enemy_count;\n                                enemy_type[spawn_idx1] = ENEMY_SLIME();\n                                enemy_x[spawn_idx1] = ex + 1.0;\n                                enemy_y[spawn_idx1] = ey;\n                                enemy_hp[spawn_idx1] = enemy_max_hp(ENEMY_SLIME());\n                                enemy_alive[spawn_idx1] = 1;\n                                enemy_dir[spawn_idx1] = 0.0;\n                                enemy_timer[spawn_idx1] = 0.0;\n\n                                let spawn_idx2 = enemy_count + 1;\n                                enemy_type[spawn_idx2] = ENEMY_SLIME();\n                                enemy_x[spawn_idx2] = ex - 1.0;\n                                enemy_y[spawn_idx2] = ey;\n                                enemy_hp[spawn_idx2] = enemy_max_hp(ENEMY_SLIME());\n                                enemy_alive[spawn_idx2] = 1;\n                                enemy_dir[spawn_idx2] = 0.0;\n                                enemy_timer[spawn_idx2] = 0.0;\n\n                                enemy_count = enemy_count + 2\n                            }\n                        }\n                    }\n                };\n                eai = eai + 1\n            };\n```\n\n**Acceptance Criteria**:\n- Enemies only update when `enemy_alive[i] == 1`\n- Enemies within detect range move toward player (or retreat if skeleton with low HP)\n- Enemies outside detect range patrol randomly, changing direction every 1-3 seconds\n- Non-ghost enemies respect wall collision (per-axis check)\n- Ghost enemies move through walls\n- Boss spawns 2 slimes when HP drops below 75 (half of 150)\n- Spawned slimes are added to the enemy arrays at `enemy_count` and `enemy_count+1`\n- `enemy_count` is incremented by 2 after spawn\n- Guard against exceeding `MAX_ENEMIES()` (32)\n- All movement is multiplied by `dt` for frame-rate independence\n- Distance computed using the `dist()` helper from T2\n\n---\n\n#### T12: Player Attack \u2014 SPACE to Attack Enemies in Range (depends on T5, T7, T10)\n\n**Description**: When the player presses SPACE and the attack cooldown has expired, deal damage to all enemies within `PLAYER_ATTACK_RANGE()` tile units. Spawn attack particles in the facing direction. When an enemy's HP drops to 0, mark it as dead and spawn death particles.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after enemy AI code (T11)\n\n**Exact code to write**:\n\n```ryx\n            // --- Player attack ---\n            if gfx_key_just_pressed(KEY_SPACE()) && player_attack_timer <= 0.0 {\n                player_attack_timer = PLAYER_ATTACK_COOLDOWN();\n\n                // Spawn attack particles in facing direction\n                let attack_angle = if player_facing == 0 { 0.0 }\n                    else if player_facing == 1 { pi() / 2.0 }\n                    else if player_facing == 2 { pi() }\n                    else { 0.0 - pi() / 2.0 };\n\n                let mut atk_pi = 0;\n                while atk_pi < 6 {\n                    // Find an inactive particle slot\n                    let mut slot = 0;\n                    let mut found_slot = false;\n                    while slot < MAX_PARTICLES() && !found_slot {\n                        if part_active[slot] == 0 {\n                            found_slot = true\n                        } else {\n                            slot = slot + 1\n                        }\n                    };\n                    if found_slot {\n                        part_x[slot] = player_x;\n                        part_y[slot] = player_y;\n                        part_vx[slot] = attack_vx(attack_angle, atk_pi, 6, 3.0);\n                        part_vy[slot] = attack_vy(attack_angle, atk_pi, 6, 3.0);\n                        part_life[slot] = 0.3;\n                        part_color[slot] = COLOR_WHITE();\n                        part_active[slot] = 1\n                    };\n                    atk_pi = atk_pi + 1\n                };\n\n                // Damage enemies in range\n                let mut dai = 0;\n                while dai < enemy_count {\n                    if enemy_alive[dai] == 1 {\n                        let ed = dist(player_x, player_y, enemy_x[dai], enemy_y[dai]);\n                        if ed <= PLAYER_ATTACK_RANGE() {\n                            // Random damage between min and max\n                            let dmg = random_int(PLAYER_ATTACK_MIN_DMG(), PLAYER_ATTACK_MAX_DMG() + 1);\n                            enemy_hp[dai] = enemy_hp[dai] - dmg;\n\n                            if enemy_hp[dai] <= 0 {\n                                // Enemy killed\n                                enemy_alive[dai] = 0;\n                                score = score + 10 * enemy_type[dai];\n\n                                // Spawn death particles (12 in enemy color)\n                                let death_color = enemy_color(enemy_type[dai]);\n                                let mut dpi = 0;\n                                while dpi < 12 {\n                                    let mut dslot = 0;\n                                    let mut dfound = false;\n                                    while dslot < MAX_PARTICLES() && !dfound {\n                                        if part_active[dslot] == 0 {\n                                            dfound = true\n                                        } else {\n                                            dslot = dslot + 1\n                                        }\n                                    };\n                                    if dfound {\n                                        part_x[dslot] = enemy_x[dai];\n                                        part_y[dslot] = enemy_y[dai];\n                                        part_vx[dslot] = burst_vx(dpi, 12, 2.5);\n                                        part_vy[dslot] = burst_vy(dpi, 12, 2.5);\n                                        part_life[dslot] = 0.6;\n                                        part_color[dslot] = death_color;\n                                        part_active[dslot] = 1\n                                    };\n                                    dpi = dpi + 1\n                                }\n                            }\n                        }\n                    };\n                    dai = dai + 1\n                }\n            };\n```\n\n**Acceptance Criteria**:\n- Attack only triggers when SPACE is just pressed (not held) AND cooldown has expired\n- Attack cooldown is set to 0.4 seconds after each attack\n- 6 white particles spawn in a semicircular arc in the player's facing direction\n- All enemies within 1.5 tile units take 20-35 random damage\n- When enemy HP <= 0, `enemy_alive[i]` is set to 0\n- Score increases by `10 * enemy_type` (slime=10, skeleton=20, ghost=30, boss=40)\n- 12 particles in the enemy's color spawn at the enemy's position on death\n- Particle slot search skips active particles and uses first available inactive slot\n- Uses `burst_vx/vy` from T4 for death particles and `attack_vx/vy` for attack particles\n\n---\n\n#### T13: Enemy Contact Damage (depends on T5, T7, T10)\n\n**Description**: Enemies that touch the player deal their type-specific damage. The player has a brief invulnerability window after being hit (0.5 seconds). When player HP reaches 0, transition to game over. Spawn red damage particles when player is hit.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after player attack code (T12)\n\n**Exact code to write**:\n\n```ryx\n            // --- Enemy contact damage ---\n            if player_invuln_timer <= 0.0 {\n                let mut eci = 0;\n                while eci < enemy_count {\n                    if enemy_alive[eci] == 1 {\n                        let contact_dist = dist(player_x, player_y, enemy_x[eci], enemy_y[eci]);\n                        if contact_dist < 0.7 {\n                            // Player takes damage\n                            let edamage = enemy_damage(enemy_type[eci]);\n                            player_hp = player_hp - edamage;\n                            player_damage_flash = 0.3;\n                            player_invuln_timer = 0.5;\n\n                            // Spawn 4 red damage particles\n                            let mut dmi = 0;\n                            while dmi < 4 {\n                                let mut dmslot = 0;\n                                let mut dmfound = false;\n                                while dmslot < MAX_PARTICLES() && !dmfound {\n                                    if part_active[dmslot] == 0 {\n                                        dmfound = true\n                                    } else {\n                                        dmslot = dmslot + 1\n                                    }\n                                };\n                                if dmfound {\n                                    part_x[dmslot] = player_x;\n                                    part_y[dmslot] = player_y;\n                                    part_vx[dmslot] = burst_vx(dmi, 4, 2.0);\n                                    part_vy[dmslot] = burst_vy(dmi, 4, 2.0);\n                                    part_life[dmslot] = 0.3;\n                                    part_color[dmslot] = COLOR_RED();\n                                    part_active[dmslot] = 1\n                                };\n                                dmi = dmi + 1\n                            };\n\n                            // Check for death\n                            if player_hp <= 0 {\n                                player_hp = 0;\n                                game_state = STATE_GAME_OVER()\n                            }\n                        }\n                    };\n                    eci = eci + 1\n                }\n            };\n```\n\n**Acceptance Criteria**:\n- Contact damage only occurs when `player_invuln_timer <= 0.0`\n- Enemy-player contact threshold is 0.7 tile units (slightly less than 1 tile)\n- Player HP decreases by the enemy's damage value\n- `player_damage_flash` is set to 0.3 for visual feedback\n- `player_invuln_timer` is set to 0.5 seconds to prevent rapid damage\n- 4 red particles spawn at player position on hit\n- When player HP reaches 0, game transitions to `STATE_GAME_OVER`\n- Only the first enemy in contact range triggers the damage (invulnerability prevents stacking)\n\n---\n\n#### T14: Item Pickup (depends on T5, T7, T10)\n\n**Description**: When the player walks over an active item, collect it: apply its effect (heal or score), spawn pickup particles, and deactivate the item.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after contact damage code (T13)\n\n**Exact code to write**:\n\n```ryx\n            // --- Item pickup ---\n            let ptx = float_to_int(floor(player_x));\n            let pty = float_to_int(floor(player_y));\n\n            let mut ipi = 0;\n            while ipi < item_count {\n                if item_active[ipi] == 1 {\n                    if item_x[ipi] == ptx && item_y[ipi] == pty {\n                        // Collect item\n                        item_active[ipi] = 0;\n\n                        let itype = item_type[ipi];\n                        if itype == ITEM_HEALTH() {\n                            player_hp = min(player_hp + 30, PLAYER_MAX_HP())\n                        } else if itype == ITEM_GEM() {\n                            score = score + 50\n                        };\n\n                        // Spawn 8 pickup particles (spiral upward in item color)\n                        let pickup_color = item_color(itype);\n                        let item_center_x = int_to_float(item_x[ipi]) + 0.5;\n                        let item_center_y = int_to_float(item_y[ipi]) + 0.5;\n\n                        let mut ppi = 0;\n                        while ppi < 8 {\n                            let mut ppslot = 0;\n                            let mut ppfound = false;\n                            while ppslot < MAX_PARTICLES() && !ppfound {\n                                if part_active[ppslot] == 0 {\n                                    ppfound = true\n                                } else {\n                                    ppslot = ppslot + 1\n                                }\n                            };\n                            if ppfound {\n                                part_x[ppslot] = item_center_x;\n                                part_y[ppslot] = item_center_y;\n                                part_vx[ppslot] = spiral_vx(ppi, 8, 1.5);\n                                part_vy[ppslot] = spiral_vy(ppi, 8, 2.0);\n                                part_life[ppslot] = 0.4;\n                                part_color[ppslot] = pickup_color;\n                                part_active[ppslot] = 1\n                            };\n                            ppi = ppi + 1\n                        }\n                    }\n                };\n                ipi = ipi + 1\n            };\n```\n\n**Acceptance Criteria**:\n- Items are collected when the player's tile position matches the item's tile position\n- Health potions restore 30 HP, capped at `PLAYER_MAX_HP()` (100)\n- Gems add 50 to score\n- Collected items have `item_active[i]` set to 0\n- 8 particles spawn at the item's center in the item's color using `spiral_vx/vy`\n- Only active items (`item_active[i] == 1`) are checked\n- Uses `spiral_vx/vy` from T4 for upward spiral effect\n\n---\n\n### Wave 4 \u2014 Rendering & Particles (T15-T17, T15 parallel with T16, T17 depends on both)\n\n---\n\n#### T15: Particle System Update (depends on T5, T7)\n\n**Description**: Update all active particles each frame: move by velocity, decrement lifetime, deactivate when lifetime expires. This runs inside the gameplay update section, after all entity logic.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after item pickup code (T14)\n\n**Exact code to write**:\n\n```ryx\n            // --- Particle update ---\n            let mut pui = 0;\n            while pui < MAX_PARTICLES() {\n                if part_active[pui] == 1 {\n                    part_life[pui] = part_life[pui] - dt;\n                    if part_life[pui] <= 0.0 {\n                        part_active[pui] = 0\n                    } else {\n                        part_x[pui] = part_x[pui] + part_vx[pui] * dt;\n                        part_y[pui] = part_y[pui] + part_vy[pui] * dt;\n                        // Apply light friction to slow particles down\n                        part_vx[pui] = part_vx[pui] * 0.96;\n                        part_vy[pui] = part_vy[pui] * 0.96\n                    }\n                };\n                pui = pui + 1\n            };\n```\n\n**Acceptance Criteria**:\n- All 64 particle slots are checked each frame\n- Active particles have their position updated by velocity * dt\n- Lifetime decreases by dt each frame\n- Particles with lifetime <= 0 are deactivated (`part_active[i] = 0`)\n- Velocity decays by 4% per frame (friction factor 0.96) for natural deceleration\n- Inactive particles are not updated\n\n---\n\n#### T16: Tile, Entity, and Particle Rendering (depends on T5, T7)\n\n**Description**: Draw the complete game scene: tiles (with optional wall textures), items (as colored shapes), enemies (as colored rectangles with simple directional indicators), particles (as small colored rectangles fading with lifetime), and the player (as a colored rectangle with facing indicator). Draw order: tiles first, then items, then enemies, then particles, then player (player always on top).\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after particle update (T15)\n\n**Exact code to write**:\n\n```ryx\n            // ===============================================================\n            // RENDERING\n            // ===============================================================\n\n            // --- Draw tiles ---\n            let mut ry = 0;\n            while ry < map_rows() {\n                let mut rx = 0;\n                while rx < map_cols() {\n                    let tile = tile_at(tiles, rx, ry);\n                    let px = rx * tile_size();\n                    let py = ry * tile_size();\n\n                    if tile == TILE_FLOOR() || tile == TILE_DOOR() {\n                        // Draw floor with checkerboard pattern\n                        gfx_set_color(floor_color(rx, ry));\n                        gfx_fill_rect(px, py, tile_size(), tile_size());\n                        // Draw door frame if door tile\n                        if tile == TILE_DOOR() {\n                            gfx_set_color(gfx_rgb(140, 90, 40));\n                            gfx_rect(px + 2, py + 2, tile_size() - 4, tile_size() - 4)\n                        }\n                    } else if tile == TILE_WALL() {\n                        // Try to draw wall texture, fall back to colored rect\n                        if wall_img >= 0 {\n                            gfx_draw_image_scaled(wall_img, px, py,\n                                int_to_float(tile_size()) / int_to_float(gfx_image_width(wall_img)),\n                                int_to_float(tile_size()) / int_to_float(gfx_image_height(wall_img)))\n                        } else {\n                            gfx_set_color(tile_color(TILE_WALL()));\n                            gfx_fill_rect(px, py, tile_size(), tile_size())\n                        };\n                        // Draw subtle grid line\n                        gfx_set_color(gfx_rgba(0, 0, 0, 60));\n                        gfx_rect(px, py, tile_size(), tile_size())\n                    } else if tile == TILE_WALL2() {\n                        // Mossy wall variant\n                        if wall2_img >= 0 {\n                            gfx_draw_image_scaled(wall2_img, px, py,\n                                int_to_float(tile_size()) / int_to_float(gfx_image_width(wall2_img)),\n                                int_to_float(tile_size()) / int_to_float(gfx_image_height(wall2_img)))\n                        } else {\n                            gfx_set_color(tile_color(TILE_WALL2()));\n                            gfx_fill_rect(px, py, tile_size(), tile_size())\n                        };\n                        gfx_set_color(gfx_rgba(0, 0, 0, 60));\n                        gfx_rect(px, py, tile_size(), tile_size())\n                    } else if tile == TILE_EXIT() {\n                        // Exit tile \u2014 pulsing green glow\n                        gfx_set_color(tile_color(TILE_EXIT()));\n                        gfx_fill_rect(px, py, tile_size(), tile_size());\n                        // Draw staircase symbol (diagonal lines)\n                        gfx_set_color(gfx_rgb(200, 255, 200));\n                        gfx_line(px + 4, py + 28, px + 12, py + 20);\n                        gfx_line(px + 12, py + 20, px + 20, py + 12);\n                        gfx_line(px + 20, py + 12, px + 28, py + 4)\n                    } else if tile == TILE_WATER() {\n                        // Water tile\n                        gfx_set_color(tile_color(TILE_WATER()));\n                        gfx_fill_rect(px, py, tile_size(), tile_size());\n                        // Simple wave lines\n                        gfx_set_color(gfx_rgba(80, 100, 180, 200));\n                        gfx_line(px + 2, py + 10, px + 30, py + 12);\n                        gfx_line(px + 2, py + 20, px + 30, py + 22)\n                    };\n                    rx = rx + 1\n                };\n                ry = ry + 1\n            };\n\n            // --- Draw items ---\n            let mut iri = 0;\n            while iri < item_count {\n                if item_active[iri] == 1 {\n                    let ipx = item_x[iri] * tile_size() + tile_size() / 4;\n                    let ipy = item_y[iri] * tile_size() + tile_size() / 4;\n                    let isize = tile_size() / 2;\n\n                    gfx_set_color(item_color(item_type[iri]));\n\n                    if item_type[iri] == ITEM_HEALTH() {\n                        // Health potion: red square with white cross\n                        gfx_fill_rect(ipx, ipy, isize, isize);\n                        gfx_set_color(COLOR_WHITE());\n                        gfx_fill_rect(ipx + isize / 2 - 1, ipy + 2, 3, isize - 4);\n                        gfx_fill_rect(ipx + 2, ipy + isize / 2 - 1, isize - 4, 3)\n                    } else if item_type[iri] == ITEM_GEM() {\n                        // Gem: cyan diamond (drawn as rotated square using lines)\n                        let cx = ipx + isize / 2;\n                        let cy = ipy + isize / 2;\n                        let hr = isize / 2;\n                        gfx_line(cx, cy - hr, cx + hr, cy);\n                        gfx_line(cx + hr, cy, cx, cy + hr);\n                        gfx_line(cx, cy + hr, cx - hr, cy);\n                        gfx_line(cx - hr, cy, cx, cy - hr);\n                        // Fill center\n                        gfx_fill_rect(cx - 2, cy - 2, 5, 5)\n                    } else if item_type[iri] == ITEM_KEY() {\n                        // Key: gold square\n                        gfx_fill_rect(ipx, ipy, isize, isize)\n                    }\n                };\n                iri = iri + 1\n            };\n\n            // --- Draw enemies ---\n            let mut eri = 0;\n            while eri < enemy_count {\n                if enemy_alive[eri] == 1 {\n                    let etype_r = enemy_type[eri];\n                    let esize_r = enemy_size(etype_r);\n                    let epx = float_to_int(enemy_x[eri] * int_to_float(tile_size())) - esize_r / 2;\n                    let epy = float_to_int(enemy_y[eri] * int_to_float(tile_size())) - esize_r / 2;\n\n                    // Draw enemy body\n                    gfx_set_color(enemy_color(etype_r));\n                    gfx_fill_rect(epx, epy, esize_r, esize_r);\n\n                    // Draw dark outline\n                    gfx_set_color(gfx_rgba(0, 0, 0, 100));\n                    gfx_rect(epx, epy, esize_r, esize_r);\n\n                    // Draw HP bar above enemy (if damaged)\n                    if enemy_hp[eri] < enemy_max_hp(etype_r) {\n                        let hp_bar_w = esize_r;\n                        let hp_bar_h = 3;\n                        let hp_bar_x = epx;\n                        let hp_bar_y = epy - 5;\n                        let hp_ratio = int_to_float(enemy_hp[eri]) / int_to_float(enemy_max_hp(etype_r));\n                        let hp_fill = float_to_int(int_to_float(hp_bar_w) * hp_ratio);\n\n                        // Background (dark red)\n                        gfx_set_color(gfx_rgb(100, 0, 0));\n                        gfx_fill_rect(hp_bar_x, hp_bar_y, hp_bar_w, hp_bar_h);\n                        // Fill (green to red gradient based on health)\n                        let bar_color = color_lerp(COLOR_RED(), COLOR_GREEN(), hp_ratio);\n                        gfx_set_color(bar_color);\n                        gfx_fill_rect(hp_bar_x, hp_bar_y, hp_fill, hp_bar_h)\n                    }\n                };\n                eri = eri + 1\n            };\n\n            // --- Draw particles ---\n            let mut pri = 0;\n            while pri < MAX_PARTICLES() {\n                if part_active[pri] == 1 {\n                    let ppx = float_to_int(part_x[pri] * int_to_float(tile_size()));\n                    let ppy = float_to_int(part_y[pri] * int_to_float(tile_size()));\n\n                    // Fade alpha based on remaining lifetime\n                    let base_color = part_color[pri];\n                    let alpha = float_to_int(clamp(part_life[pri] * 400.0, 0.0, 255.0));\n                    let faded = gfx_rgba(color_r(base_color), color_g(base_color), color_b(base_color), alpha);\n                    gfx_set_color(faded);\n\n                    // Draw as small filled rect (3x3 pixels)\n                    gfx_fill_rect(ppx - 1, ppy - 1, 3, 3)\n                };\n                pri = pri + 1\n            };\n\n            // --- Draw player ---\n            let player_px = float_to_int(player_x * int_to_float(tile_size())) - 12;\n            let player_py = float_to_int(player_y * int_to_float(tile_size())) - 12;\n            let player_size = 24;\n\n            // Damage flash effect: alternate between normal and red\n            let player_base_color = if player_damage_flash > 0.0 {\n                // Flash red/white alternation\n                if float_to_int(player_damage_flash * 20.0) % 2 == 0 {\n                    gfx_rgb(255, 100, 100)\n                } else {\n                    gfx_rgb(80, 140, 220)\n                }\n            } else {\n                gfx_rgb(80, 140, 220)  // Normal blue color\n            };\n\n            gfx_set_color(player_base_color);\n            gfx_fill_rect(player_px, player_py, player_size, player_size);\n\n            // Draw facing indicator (small triangle/line in facing direction)\n            gfx_set_color(COLOR_WHITE());\n            let pcx = player_px + player_size / 2;\n            let pcy = player_py + player_size / 2;\n            if player_facing == 0 {\n                // Right\n                gfx_line(pcx + 4, pcy, pcx + 12, pcy)\n            } else if player_facing == 1 {\n                // Down\n                gfx_line(pcx, pcy + 4, pcx, pcy + 12)\n            } else if player_facing == 2 {\n                // Left\n                gfx_line(pcx - 4, pcy, pcx - 12, pcy)\n            } else {\n                // Up\n                gfx_line(pcx, pcy - 4, pcx, pcy - 12)\n            };\n\n            // Draw player outline\n            gfx_set_color(gfx_rgba(255, 255, 255, 100));\n            gfx_rect(player_px, player_py, player_size, player_size);\n```\n\n**Acceptance Criteria**:\n- All 300 tiles (20x15) are rendered each frame\n- Floor tiles use checkerboard pattern via `floor_color()`\n- Wall tiles use PNG texture if loaded (`wall_img >= 0`), else solid color\n- Wall variant tiles use moss texture if loaded, else solid color\n- Exit tile has staircase visual (diagonal lines)\n- Water tiles have simple wave lines\n- Items draw with type-specific visuals (cross for health, diamond for gem)\n- Enemies draw as colored rectangles centered at their float position\n- Enemies show HP bars when damaged (green-to-red gradient)\n- Particles draw as 3x3 fading rectangles with alpha based on lifetime\n- Player draws as 24x24 blue rectangle with white facing indicator line\n- Player flashes red/normal when `player_damage_flash > 0`\n- Draw order: tiles -> items -> enemies -> particles -> player\n\n---\n\n#### T17: HUD and Minimap (depends on T16)\n\n**Description**: Draw the heads-up display overlay and minimap on top of the game scene. The HUD shows player health (as a bar), score, level number, remaining enemies, and FPS. The minimap is a small overview of the entire level.\n\n**File**: `examples/dungeon_crawler.ryx` \u2014 inside the `STATE_PLAYING` branch, after all rendering code (T16), before the level completion check (T8)\n\n**Exact code to write**:\n\n```ryx\n            // ===============================================================\n            // HUD OVERLAY\n            // ===============================================================\n\n            // Semi-transparent HUD bar across the top\n            gfx_set_color(gfx_rgba(0, 0, 0, 180));\n            gfx_fill_rect(0, 0, screen_w(), 30);\n\n            // Health bar (left side)\n            let hp_bar_x_hud = 10;\n            let hp_bar_y_hud = 8;\n            let hp_bar_w_hud = 120;\n            let hp_bar_h_hud = 14;\n            let hp_pct = int_to_float(player_hp) / int_to_float(PLAYER_MAX_HP());\n            let hp_fill_w = float_to_int(int_to_float(hp_bar_w_hud) * hp_pct);\n\n            // HP bar background\n            gfx_set_color(gfx_rgb(60, 0, 0));\n            gfx_fill_rect(hp_bar_x_hud, hp_bar_y_hud, hp_bar_w_hud, hp_bar_h_hud);\n\n            // HP bar fill (green when high, yellow when medium, red when low)\n            let hp_color = if hp_pct > 0.6 { gfx_rgb(50, 200, 50) }\n                else if hp_pct > 0.3 { gfx_rgb(200, 200, 50) }\n                else { gfx_rgb(200, 50, 50) };\n            gfx_set_color(hp_color);\n            gfx_fill_rect(hp_bar_x_hud, hp_bar_y_hud, hp_fill_w, hp_bar_h_hud);\n\n            // HP bar outline\n            gfx_set_color(gfx_rgba(255, 255, 255, 100));\n            gfx_rect(hp_bar_x_hud, hp_bar_y_hud, hp_bar_w_hud, hp_bar_h_hud);\n\n            // HP text\n            gfx_set_color(COLOR_WHITE());\n            gfx_text(hp_bar_x_hud + 2, hp_bar_y_hud + 1,\n                int_to_string(player_hp) ++ \"/\" ++ int_to_string(PLAYER_MAX_HP()));\n\n            // Level number (center)\n            gfx_text(280, 8, \"Level \" ++ int_to_string(current_level));\n\n            // Score\n            gfx_set_color(gfx_rgb(255, 215, 0));\n            gfx_text(370, 8, \"Score: \" ++ int_to_string(score));\n\n            // Enemy count\n            let mut hud_alive = 0;\n            let mut hai = 0;\n            while hai < enemy_count {\n                if enemy_alive[hai] == 1 {\n                    hud_alive = hud_alive + 1\n                };\n                hai = hai + 1\n            };\n            gfx_set_color(gfx_rgb(200, 100, 100));\n            gfx_text(480, 8, \"Foes: \" ++ int_to_string(hud_alive));\n\n            // FPS (right side)\n            gfx_set_color(gfx_rgb(120, 120, 120));\n            gfx_text(580, 8, \"FPS:\" ++ int_to_string(float_to_int(gfx_fps())));\n\n            // Attack cooldown indicator (small bar under HUD)\n            if player_attack_timer > 0.0 {\n                let cd_pct = player_attack_timer / PLAYER_ATTACK_COOLDOWN();\n                let cd_w = float_to_int(60.0 * cd_pct);\n                gfx_set_color(gfx_rgba(200, 200, 200, 120));\n                gfx_fill_rect(140, 22, cd_w, 4)\n            };\n\n            // ===============================================================\n            // MINIMAP (top-right corner)\n            // ===============================================================\n\n            let mm_x = screen_w() - 84;  // 640 - 84 = 556\n            let mm_y = 34;                // just below HUD bar\n            let mm_tw = 4;               // pixels per tile width\n            let mm_th = 4;               // pixels per tile height\n\n            // Minimap background\n            gfx_set_color(gfx_rgba(0, 0, 0, 160));\n            gfx_fill_rect(mm_x - 2, mm_y - 2, map_cols() * mm_tw + 4, map_rows() * mm_th + 4);\n\n            // Draw tiles on minimap\n            let mut mmy = 0;\n            while mmy < map_rows() {\n                let mut mmx = 0;\n                while mmx < map_cols() {\n                    let mtile = tile_at(tiles, mmx, mmy);\n                    if mtile == TILE_WALL() || mtile == TILE_WALL2() {\n                        gfx_set_color(gfx_rgb(140, 130, 120));\n                        gfx_fill_rect(mm_x + mmx * mm_tw, mm_y + mmy * mm_th, mm_tw, mm_th)\n                    } else if mtile == TILE_WATER() {\n                        gfx_set_color(gfx_rgb(40, 60, 140));\n                        gfx_fill_rect(mm_x + mmx * mm_tw, mm_y + mmy * mm_th, mm_tw, mm_th)\n                    } else if mtile == TILE_EXIT() {\n                        gfx_set_color(gfx_rgb(0, 255, 100));\n                        gfx_fill_rect(mm_x + mmx * mm_tw, mm_y + mmy * mm_th, mm_tw, mm_th)\n                    };\n                    mmx = mmx + 1\n                };\n                mmy = mmy + 1\n            };\n\n            // Draw items on minimap as cyan dots\n            let mut mmi = 0;\n            while mmi < item_count {\n                if item_active[mmi] == 1 {\n                    gfx_set_color(gfx_rgb(0, 255, 255));\n                    gfx_fill_rect(\n                        mm_x + item_x[mmi] * mm_tw + 1,\n                        mm_y + item_y[mmi] * mm_th + 1,\n                        2, 2)\n                };\n                mmi = mmi + 1\n            };\n\n            // Draw enemies on minimap as red dots\n            let mut mme = 0;\n            while mme < enemy_count {\n                if enemy_alive[mme] == 1 {\n                    gfx_set_color(COLOR_RED());\n                    let emx = float_to_int(enemy_x[mme]) * mm_tw;\n                    let emy = float_to_int(enemy_y[mme]) * mm_th;\n                    gfx_fill_rect(mm_x + emx, mm_y + emy, 3, 3)\n                };\n                mme = mme + 1\n            };\n\n            // Draw player on minimap as white dot\n            gfx_set_color(COLOR_WHITE());\n            let pmmx = float_to_int(player_x) * mm_tw;\n            let pmmy = float_to_int(player_y) * mm_th;\n            gfx_fill_rect(mm_x + pmmx, mm_y + pmmy, 3, 3);\n```\n\n**Acceptance Criteria**:\n- HUD bar is 30 pixels tall, semi-transparent black, full screen width\n- Health bar shows green (>60%), yellow (30-60%), or red (<30%) fill\n- HP text shows current/max (e.g., \"75/100\")\n- Level number, score, enemy count, and FPS are displayed\n- Attack cooldown shows as a small diminishing bar\n- Minimap is positioned at top-right, 80x60 pixels (20 tiles * 4px, 15 tiles * 4px)\n- Minimap has semi-transparent black background with 2px padding\n- Walls shown as gray, water as blue, exit as green on minimap\n- Items shown as cyan 2x2 dots\n- Enemies shown as red 3x3 dots\n- Player shown as white 3x3 dot\n- Read `examples/raycaster.ryx` lines 378-425 for the minimap pattern\n\n---\n\n### Wave 5 \u2014 Integration & Testing (T18, depends on all)\n\n---\n\n#### T18: Integration Test and Asset Creation (depends on all previous tasks)\n\n**Description**: Add a compile-only integration test that verifies `examples/dungeon_crawler.ryx` compiles without errors. Create minimal placeholder wall texture PNGs. Verify the complete file compiles and runs.\n\n**Files**:\n- `tests/integration/e2e_test.go` \u2014 add compile-only test\n- `examples/assets/wall_stone.png` \u2014 create 32x32 gray brick texture\n- `examples/assets/wall_moss.png` \u2014 create 32x32 green-gray texture\n\n**Code for integration test** (add to `tests/integration/e2e_test.go`):\n\n```go\nfunc TestDungeonCrawlerCompiles(t *testing.T) {\n\tsrc, err := os.ReadFile(\"../../examples/dungeon_crawler.ryx\")\n\tif err != nil {\n\t\tt.Skipf(\"dungeon_crawler.ryx not found: %v\", err)\n\t}\n\t_, compileErr := compileAndRun(string(src), \"dungeon_crawler.ryx\")\n\t// The program calls gfx_init/gfx_run which requires a display,\n\t// so we only verify it compiles (no runtime execution in CI).\n\t// A compile error would be reported; runtime errors from graphics\n\t// are expected in headless environments.\n\tif compileErr != nil && !strings.Contains(compileErr.Error(), \"graphics\") &&\n\t\t!strings.Contains(compileErr.Error(), \"display\") &&\n\t\t!strings.Contains(compileErr.Error(), \"ebiten\") {\n\t\tt.Errorf(\"dungeon_crawler.ryx failed to compile: %v\", compileErr)\n\t}\n}\n```\n\n**For the PNG assets**: Generate minimal 32x32 PNG images programmatically using Go's `image` package in a small standalone script, or manually create them. The images should be:\n- `wall_stone.png`: 32x32 pixels, gray brick pattern (alternating #787878 and #646464 bands)\n- `wall_moss.png`: 32x32 pixels, green-gray pattern (alternating #5A6E50 and #4A5E40 bands)\n\nIf the PNG assets cannot be created, the game gracefully falls back to solid-color rectangles (`gfx_load_image` returns -1 when the file is not found).\n\n**Acceptance Criteria**:\n- `go test ./tests/integration/ -run DungeonCrawler` passes\n- The complete `examples/dungeon_crawler.ryx` file compiles without parse, resolve, or type errors\n- `./ryx run examples/dungeon_crawler.ryx` opens a window and shows the title screen\n- All existing tests continue to pass: `go test ./...`\n- The game runs at 60 FPS without visible stuttering\n- Read `tests/integration/e2e_test.go` for the existing test pattern\n\n---\n\n## Complete File Structure\n\nThe final `examples/dungeon_crawler.ryx` has this structure (approximate line ranges):\n\n```\nLines    1-120:   Section 1-2: Color utilities + Game constants (T1)\nLines  121-230:   Section 3: Map & tile helpers (T2)\nLines  231-500:   Section 4: Level data for 3 levels (T3)\nLines  501-570:   Section 5: Particle velocity helpers (T4)\nLines  571-820:   Section 6: fn main() opening, mutable state declaration (T5)\nLines  821-920:   Section 7: Initial level load (T6)\nLines  921-990:   Section 8: Frame callback opening, state machine skeleton (T7)\nLines  991-1060:  STATE_TITLE branch (T9)\nLines 1061-1100:  STATE_PLAYING: Player input & movement (T10)\nLines 1101-1180:  STATE_PLAYING: Enemy AI & movement (T11)\nLines 1181-1260:  STATE_PLAYING: Player attack (T12)\nLines 1261-1310:  STATE_PLAYING: Enemy contact damage (T13)\nLines 1311-1370:  STATE_PLAYING: Item pickup (T14)\nLines 1371-1395:  STATE_PLAYING: Particle update (T15)\nLines 1396-1600:  STATE_PLAYING: All rendering (T16)\nLines 1601-1720:  STATE_PLAYING: HUD + Minimap (T17)\nLines 1721-1760:  STATE_PLAYING: Level completion check (T8)\nLines 1761-1830:  STATE_LEVEL_COMPLETE branch (T8)\nLines 1831-1910:  STATE_GAME_OVER branch (T9)\nLines 1911-1940:  STATE_VICTORY branch (T9)\nLines 1941-1960:  STATE_PAUSED branch (T9)\nLines 1961-1965:  Frame callback close + gfx_run + main close (T7)\n```\n\nTotal: approximately 1400-1600 lines.\n\n---\n\n## Risks & Mitigations\n\n| Risk | Mitigation |\n|------|-----------|\n| Single-file assembly conflicts: multiple workers editing the same file | Each task targets a specific, non-overlapping section of the file. Comment banners with section numbers provide clear boundaries. Workers should NOT modify sections outside their assigned range. |\n| Array size mismatches causing index-out-of-bounds | All array sizes are defined as constants (`MAX_ENEMIES()=32`, `MAX_PARTICLES()=64`, `MAX_ITEMS()=16`, `map_len()=300`). Every array loop uses these constants as bounds. |\n| Mutable variable name typos across tasks | T5 defines the canonical variable names. All subsequent tasks reference the exact names from T5. A single typo will cause a compile error, caught by T18. |\n| Level data errors (enemy on wall, item on water) | Each level's enemy/item spawn positions are manually verified against the tile map. Start positions are on floor tiles. |\n| Performance: 64 particles + 32 enemies + 300 tiles per frame | At 60 FPS this is ~400 draw commands per frame, well within Ebiten's capability. The raycaster example draws 640 vertical lines per frame. |\n| `gfx_load_image` returns -1 when assets are missing | All image-drawing code checks `if wall_img >= 0` before calling `gfx_draw_image_scaled`. The game is fully playable without textures. |\n| Closure captures too many mutable variables | The raycaster example already captures 7 mutable variables and works correctly after the closure-capture bug fix. The dungeon crawler captures ~40, which should work with the same mechanism. If issues arise, reduce to fewer state variables. |\n| Large array literals slow down compilation | The Ryx compiler handles the raycaster's 256-element map array. The dungeon crawler uses 300-element arrays (tiles) and 64-element arrays (particles), which should compile in comparable time. |\n| Boss minion spawn exceeds `MAX_ENEMIES` | Guard clause checks `enemy_count < MAX_ENEMIES() - 1` before spawning. If no room, minions are simply not spawned. |\n| Random functions may not be deterministic across runs | This is expected for a game. `random_int` and `random_float` use Go's `math/rand/v2` which is automatically seeded. |\n\n---\n\n## Build & Verification Commands\n\n```bash\n# After all tasks complete:\n\n# 1. Compile check (headless, no display needed)\ngo build ./cmd/ryx\n./ryx check examples/dungeon_crawler.ryx\n\n# 2. Run integration tests\ngo test ./tests/integration/ -run DungeonCrawler -v\n\n# 3. Full regression suite\ngo test ./... -short\n\n# 4. Manual play test (requires display)\n./ryx run examples/dungeon_crawler.ryx\n\n# 5. Verify file size\nwc -l examples/dungeon_crawler.ryx  # should be 1400-1600 lines\n```\n\n---\n\n## Ryx Language Quick Reference (for workers)\n\n```ryx\n// Variable declaration\nlet x = 42;                    // immutable\nlet mut y = 0;                 // mutable\n\n// Functions (outside main)\nfn add(a: Int, b: Int) -> Int {\n    a + b\n}\n\n// Closures (inside main, captures mutable vars from outer scope)\nlet frame = || {\n    y = y + 1\n};\n\n// Loops (no for-in inside closures; use while)\nlet mut i = 0;\nwhile i < 10 {\n    // body\n    i = i + 1\n};\n\n// Conditionals\nif x > 0 {\n    // body\n} else if x == 0 {\n    // body\n} else {\n    // body\n};\n\n// Arrays\nlet arr = [1, 2, 3];\nlet val = arr[0];          // indexing\narr[1] = 42;               // mutation (if arr is let mut)\n\n// String concatenation\nlet s = \"Hello\" ++ \" \" ++ \"World\";\n\n// Type conversions\nlet f = int_to_float(42);\nlet n = float_to_int(3.14);\nlet s = int_to_string(42);\n\n// Graphics pattern\ngfx_init(640, 480, \"Title\");\nlet frame = || {\n    gfx_set_color(COLOR_RED());\n    gfx_fill_rect(10, 10, 100, 50);\n    if gfx_key_pressed(KEY_ESCAPE()) { gfx_quit() }\n};\ngfx_run(frame)\n\n// Math\nlet angle = pi() / 4.0;\nlet s = sin(angle);\nlet c = cos(angle);\nlet d = sqrt(x * x + y * y);\nlet r = random_int(0, 100);  // [0, 100)\nlet rf = random_float();      // [0.0, 1.0)\n\n// Negative floats: use 0.0 - value instead of -value\nlet neg = 0.0 - 3.14;\n\n// Boolean\nlet b = true && false || !true;\n```",
   "phase": "executing",
   "shutdown_reason": "",
   "working_dir": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
   "lineage": {
-    "run_id": "9125a3cd",
+    "run_id": "24d6d50c",
     "parent_run_id": "",
     "parent_run_dir": "",
-    "root_run_id": "9125a3cd",
+    "root_run_id": "24d6d50c",
     "continuation_mode": "fresh",
     "base_ref": "",
     "base_commit": "",
@@ -18,109 +18,106 @@
     "started_via": "attocode",
     "command_family": "attocode swarm"
   },
-  "updated_at": "2026-03-21T10:30:49.581185+00:00",
+  "updated_at": "2026-03-21T15:25:51.657974+00:00",
   "dag": {
     "nodes": [
       {
         "task_id": "task-1",
-        "title": "Fix mutable closure capture persistence in MIR builder",
+        "title": "Create dungeon_crawler.ryx with all pre-main helper functions",
         "status": "done",
-        "description": "Fix Bug #1: mutable closure captures reset after callback return.\n\nModify `pkg/mir/builder.go`:\n1. In the `hir.Assign` handler (around line 504-509): after creating the new local via `b.fn.NewLocal(e.",
+        "description": "Create the file `examples/dungeon_crawler.ryx` and write Sections 1-5: Color Utilities (color_r, color_g, color_b, color_a, color_scale, color_lerp, color_darken, color_lighten), Game Constants (scree",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-1",
         "target_files": [
-          "pkg/mir/builder.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"ef1e49fb-ed98-4b72-b55f-d8af805f57ad\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"5712166c-0496-4206-aae5-f51507a69f9d\",",
-        "tokens_used": 5225,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"5c4aea30-eaac-4851-a26d-bbf314de06fe\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"ba577d0e-401b-44dd-b8e8-5d54c183ba2d\",",
+        "tokens_used": 9883,
         "cost_usd": 0.0,
         "attempt_count": 0,
-        "is_foundation": true,
+        "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-2",
-          "task-3",
-          "task-9"
+          "task-2"
         ]
       },
       {
         "task_id": "task-2",
-        "title": "Add MIR unit tests for UpvalueAlias propagation",
+        "title": "Add fn main() with all mutable state declarations",
         "status": "done",
-        "description": "Add unit tests in `pkg/mir/mir_test.go` to verify UpvalueAlias propagation through SSA assignments and phi nodes.\n\nTests to add:\n1. `TestUpvalueAlias_AssignInsideConditional`: Build a MIR function tha",
-        "task_kind": "test",
+        "description": "Append to `examples/dungeon_crawler.ryx` the opening of `fn main()` containing Section 6: all mutable game state variable declarations. This includes: game state machine vars (game_state, current_leve",
+        "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-2",
         "target_files": [
-          "pkg/mir/mir_test.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"0a767c6c-c912-42ee-a1d0-77dc0664793a\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"08e2641b-ea0b-40fa-8352-964e5695749c\",",
-        "tokens_used": 5835,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"d5065105-7d01-4c90-8007-a9df233ecf0f\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"ca890e4a-9ae8-4741-8a4f-690b75eb5d1c\",",
+        "tokens_used": 6455,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-14"
+          "task-3"
         ]
       },
       {
         "task_id": "task-3",
-        "title": "Create E2E test for mutable closure captures",
+        "title": "Add initial level load and frame callback skeleton",
         "status": "done",
-        "description": "Create end-to-end test files that verify mutable closure captures persist across invocations.\n\nCreate `tests/testdata/programs/closure_mut_capture.ryx`:\n- A program that creates a closure capturing `l",
-        "task_kind": "test",
+        "description": "Append to `examples/dungeon_crawler.ryx` Section 7 (initial level load) and Section 8 (frame callback skeleton). Section 7: copy level 1 tile data into tiles array using while loop, populate enemy arr",
+        "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-3",
         "target_files": [
-          "tests/testdata/programs/closure_mut_capture.ryx",
-          "tests/testdata/programs/closure_mut_capture.expected"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"4727f875-3536-4c8e-9133-56741e64b330\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"918add0e-99b2-4e63-902b-ab286ea158cf\",",
-        "tokens_used": 17493,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"4ac29047-38cc-4ec8-abbe-4e025fff19dd\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"13f108be-5ef2-4694-9e94-a0ca28caed10\",",
+        "tokens_used": 3667,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-14"
+          "task-4"
         ]
       },
       {
         "task_id": "task-4",
-        "title": "Add gfx_delta_time builtin function",
+        "title": "Implement menu screens (title, game over, victory, pause)",
         "status": "done",
-        "description": "Add `gfx_delta_time()` builtin to `pkg/stdlib/graphics_bridge.go`.\n\nImplementation:\n- Create function `GfxDeltaTime(args []vm.Value, heap *vm.Heap) vm.Value`\n- Returns `vm.FloatVal(1.0 / ebiten.Actual",
+        "description": "Replace the placeholder `()` expressions in the frame callback's STATE_TITLE, STATE_GAME_OVER, STATE_VICTORY, and STATE_PAUSED branches with full implementations. STATE_TITLE: black background, gold t",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-4",
         "target_files": [
-          "pkg/stdlib/graphics_bridge.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"517aaae4-3277-4bfd-8eef-db3a63fecec3\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"3483ac0f-d87f-4d21-9e49-cb065398c863\",",
-        "tokens_used": 1313,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"949d9210-be47-47b8-90b7-eb5226756bb6\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"37452edc-be8e-44f1-b6ad-12e0c0687f58\",",
+        "tokens_used": 4021,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-7"
+          "task-5"
         ]
       },
       {
         "task_id": "task-5",
-        "title": "Create graphics_image.go with ImageStore and PNG loading",
+        "title": "Implement player input and movement",
         "status": "done",
-        "description": "Create `pkg/stdlib/graphics_image.go` with the ImageStore and PNG loading/query builtins.\n\nImplementation:\n1. `ImageStore` struct with `images []*ebiten.Image` and `sync.Mutex`\n2. Global `var imageSto",
+        "description": "Inside the STATE_PLAYING branch of the frame callback, replace the gameplay placeholder with player movement code. Implementation: if player_moving is true, increment player_move_progress by dt/PLAYER",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-5",
         "target_files": [
-          "pkg/stdlib/graphics_image.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"16950999-0213-4a18-8f28-22cb1f784f6f\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"5d5a95da-f776-4455-8ad9-4a818eec1c7d\",",
-        "tokens_used": 2841,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"f287817a-a55f-4cce-9a9c-59a5e184e5af\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"2d81a6d7-fa4d-42a0-9d4c-421059b51f9d\",",
+        "tokens_used": 2652,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
@@ -131,105 +128,102 @@
       },
       {
         "task_id": "task-6",
-        "title": "Add draw image commands to graphics_image.go",
+        "title": "Implement enemy AI and movement",
         "status": "done",
-        "description": "Extend `pkg/stdlib/graphics_image.go` with DrawImageCmd and draw builtins.\n\nAdd to the existing file:\n1. `DrawImageCmd` struct: `Handle int`, `X int`, `Y int`, `ScaleX float64`, `ScaleY float64`. Must",
+        "description": "Add enemy AI code inside STATE_PLAYING after player movement. Loop through enemies (while eai < enemy_count), skip dead ones. For each alive enemy: compute distance to player. If within detect range: ",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-6",
         "target_files": [
-          "pkg/stdlib/graphics_image.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e63bf808-401b-4996-a4d0-09aa8060646a\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"e601b646-b462-4be6-bdd0-9f7399161f4e\",",
-        "tokens_used": 2921,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"2e169e2a-cfb4-4e33-a6ed-0eb88b7162a2\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"0d466435-3ade-4d58-94ce-7f8a8aea72c4\",",
+        "tokens_used": 3802,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-7",
-          "task-8"
+          "task-7"
         ]
       },
       {
         "task_id": "task-7",
-        "title": "Register all new builtins in core.go and codegen.go",
+        "title": "Implement combat, contact damage, and item pickup",
         "status": "done",
-        "description": "Register all new builtins from tasks 4-6 in the central registration and codegen files.\n\nModify `pkg/stdlib/core.go`:\n- In `RegisterGraphics()` (or equivalent registration function), add call to `Regi",
-        "task_kind": "integrate",
+        "description": "Add three gameplay systems after enemy AI in STATE_PLAYING. (1) Player Attack (T12): on SPACE just-pressed and cooldown expired, set cooldown, spawn 6 white attack particles using attack_vx/vy in faci",
+        "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-7",
         "target_files": [
-          "pkg/stdlib/core.go",
-          "pkg/codegen/codegen.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"f22218ce-d19a-4243-aae5-4541310acf58\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"a926c6f8-ba97-4b6d-9ed6-465b9f8e0833\",",
-        "tokens_used": 6084,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"2e6df360-5532-480b-9fc5-540af87cad85\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"72f714b7-1074-4252-ab48-695301c1c06c\",",
+        "tokens_used": 4742,
         "cost_usd": 0.0,
         "attempt_count": 0,
-        "is_foundation": true,
+        "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-8",
-          "task-9",
-          "task-13"
+          "task-8"
         ]
       },
       {
         "task_id": "task-8",
-        "title": "Add image builtin tests",
+        "title": "Implement particle update and full scene rendering",
         "status": "done",
-        "description": "Add tests in `pkg/stdlib/graphics_test.go` for the image subsystem.\n\nTests to add:\n1. `TestGraphics_ImageStore`: Create a small `image.RGBA` programmatically (e.g., 4x4 colored pixels), convert to `*e",
-        "task_kind": "test",
+        "description": "Add after item pickup in STATE_PLAYING: (1) Particle Update (T15): loop all 64 slots, decrement life by dt, deactivate when <=0, else update position by velocity*dt and apply 0.96 friction. (2) Full R",
+        "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-8",
         "target_files": [
-          "pkg/stdlib/graphics_test.go"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"9c41aebb-6ca3-41a9-861f-cedfa8ea7733\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"57d9659e-0e13-4399-8386-80ad44bad3ad\",",
-        "tokens_used": 3656,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"2bb70c39-12f4-4a58-936f-fea6e0b8ab74\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"53d89e6d-bddd-4694-93ca-8510c0bbfea9\",",
+        "tokens_used": 7915,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-14"
+          "task-9"
         ]
       },
       {
         "task_id": "task-9",
-        "title": "Update raycaster with delta-time movement",
+        "title": "Implement HUD, minimap, and level completion logic",
         "status": "done",
-        "description": "Update `examples/raycaster.ryx` to use delta-time-based movement instead of fixed per-frame speeds.\n\nChanges:\n1. Replace `let move_speed = 0.12` and `let rot_speed = 0.03` with base speeds: `let base_",
+        "description": "Add after rendering in STATE_PLAYING: (1) HUD (T17): semi-transparent black bar (30px tall), health bar with green/yellow/red fill based on hp%, HP text, level number, score in gold, enemy alive count",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-9",
         "target_files": [
-          "examples/raycaster.ryx"
+          "examples/dungeon_crawler.ryx"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"fc70b3c8-21f6-4c6b-9665-fc471b3c65fa\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"4df24897-1033-409d-8920-a1c97d621eba\",",
-        "tokens_used": 2041,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e41cd7ca-9339-4ed1-83ff-9bb2b9e1ecf3\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"4d7ae2b4-a8d3-4e23-abe3-bf73d92bc9fb\",",
+        "tokens_used": 6465,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
         "quality_score": null,
         "depended_by": [
-          "task-10"
+          "task-11"
         ]
       },
       {
         "task_id": "task-10",
-        "title": "Add collectible item system to raycaster",
+        "title": "Create PNG wall texture assets",
         "status": "done",
-        "description": "Add collectible items to `examples/raycaster.ryx`.\n\nChanges:\n1. Add `let mut items = [...]` array matching the 16x16 world map. Place 1 values at 6-8 open floor positions (where world_map has 0). Init",
+        "description": "Create the directory `examples/assets/` and generate two minimal 32x32 PNG texture files: (1) `examples/assets/wall_stone.png`: 32x32 pixels with a gray brick pattern using alternating horizontal band",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-10",
         "target_files": [
-          "examples/raycaster.ryx"
+          "examples/assets/wall_stone.png",
+          "examples/assets/wall_moss.png"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"b87636ea-8830-4b35-8274-0c9b7419726e\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"13bb5af0-a022-4253-bd66-0c43a9c43ff0\",",
-        "tokens_used": 4907,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"72f6d8d2-ab7e-4834-a9b6-62fe9fe315c7\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"bddfb2e7-18da-473c-ba97-a75fd1383fd6\",",
+        "tokens_used": 1459,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
@@ -240,17 +234,17 @@
       },
       {
         "task_id": "task-11",
-        "title": "Add HUD overlay and score display to raycaster",
+        "title": "Add compile-only integration test for dungeon_crawler",
         "status": "done",
-        "description": "Add a HUD overlay to `examples/raycaster.ryx`.\n\nChanges:\n1. Draw semi-transparent HUD bar at top of screen: `gfx_set_color(gfx_rgba(0, 0, 0, 160))`, `gfx_fill_rect(0, 0, screen_w, 30)`.\n2. Display sco",
+        "description": "Modify `tests/integration/e2e_test.go` to add a `TestDungeonCrawlerCompiles` function. Read the existing test file first to understand the test patterns and available helper functions (like compileAnd",
         "task_kind": "implement",
         "role_hint": "impl",
         "assigned_agent": "agent-task-11",
         "target_files": [
-          "examples/raycaster.ryx"
+          "tests/integration/e2e_test.go"
         ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"f86a033e-65c0-4b57-9a1d-41a92b3064d3\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"0dc1c5c5-0b23-4743-b53b-9148b21db14c\",",
-        "tokens_used": 1517,
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"0c9a3948-9d9e-419e-8b7e-30faf23c0a9f\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"022f79fd-0c68-41d5-9d4a-208dea9ac487\",",
+        "tokens_used": 1968,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
@@ -261,61 +255,15 @@
       },
       {
         "task_id": "task-12",
-        "title": "Add start screen and game-over screen to raycaster",
+        "title": "Verify complete build and test suite",
         "status": "done",
-        "description": "Add game state management with start and win screens to `examples/raycaster.ryx`.\n\nChanges:\n1. Add `let mut game_state = 0` (0 = start, 1 = playing, 2 = win) as a captured mutable variable.\n2. Wrap fr",
-        "task_kind": "implement",
-        "role_hint": "impl",
+        "description": "Final verification task. Run: (1) `go build ./cmd/ryx` to ensure the compiler builds. (2) `wc -l examples/dungeon_crawler.ryx` to verify the file is approximately 1400-1600 lines. (3) `go test ./tests",
+        "task_kind": "judge",
+        "role_hint": "judge",
         "assigned_agent": "agent-task-12",
-        "target_files": [
-          "examples/raycaster.ryx"
-        ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e5b6eb93-fda7-4836-aa5f-c1d85ea97524\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"06db287f-db5c-45b2-8950-d6fd75a3e1dd\",",
-        "tokens_used": 13434,
-        "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": false,
-        "quality_score": null,
-        "depended_by": [
-          "task-14"
-        ]
-      },
-      {
-        "task_id": "task-13",
-        "title": "Create image_viewer.ryx example with key constants",
-        "status": "done",
-        "description": "Create `examples/image_viewer.ryx` and add any missing key constants.\n\nCreate `examples/image_viewer.ryx`:\n1. Load a PNG: `let img = gfx_load_image(\"examples/assets/sample.png\")`\n2. Get dimensions: `l",
-        "task_kind": "implement",
-        "role_hint": "impl",
-        "assigned_agent": "agent-task-13",
-        "target_files": [
-          "examples/image_viewer.ryx",
-          "pkg/stdlib/graphics_input.go"
-        ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"8dd7b15b-fa55-4714-b70a-07a2d647681e\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"85f0a999-23f3-4815-b15d-bb257cdd311f\",",
-        "tokens_used": 3234,
-        "cost_usd": 0.0,
-        "attempt_count": 0,
-        "is_foundation": false,
-        "quality_score": null,
-        "depended_by": [
-          "task-14"
-        ]
-      },
-      {
-        "task_id": "task-14",
-        "title": "Integration tests and codegen verification",
-        "status": "done",
-        "description": "Add integration and codegen tests verifying all new features work together.\n\nModify `tests/integration/e2e_test.go`:\n- Add compile-only test for `examples/raycaster.ryx` (headless, no display)\n- Add c",
-        "task_kind": "test",
-        "role_hint": "impl",
-        "assigned_agent": "agent-task-14",
-        "target_files": [
-          "tests/integration/e2e_test.go",
-          "pkg/codegen/codegen_test.go"
-        ],
-        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"eec3f385-2d60-42f5-8477-6ee3d13d8bcf\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"95b9b733-ecd9-44f1-b70f-35bdbc8cec81\",",
-        "tokens_used": 8345,
+        "target_files": [],
+        "result_summary": "{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"e127a954-a6b8-42e1-8166-337a808a7b78\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"84c78dcc-0759-449e-93f1-c3c33bdf41df\",",
+        "tokens_used": 11187,
         "cost_usd": 0.0,
         "attempt_count": 0,
         "is_foundation": false,
@@ -329,40 +277,36 @@
         "task-2"
       ],
       [
-        "task-1",
+        "task-2",
         "task-3"
+      ],
+      [
+        "task-3",
+        "task-4"
+      ],
+      [
+        "task-4",
+        "task-5"
       ],
       [
         "task-5",
         "task-6"
       ],
       [
-        "task-4",
-        "task-7"
-      ],
-      [
         "task-6",
         "task-7"
-      ],
-      [
-        "task-6",
-        "task-8"
       ],
       [
         "task-7",
         "task-8"
       ],
       [
-        "task-1",
-        "task-9"
-      ],
-      [
-        "task-7",
+        "task-8",
         "task-9"
       ],
       [
         "task-9",
-        "task-10"
+        "task-11"
       ],
       [
         "task-10",
@@ -371,30 +315,6 @@
       [
         "task-11",
         "task-12"
-      ],
-      [
-        "task-7",
-        "task-13"
-      ],
-      [
-        "task-2",
-        "task-14"
-      ],
-      [
-        "task-3",
-        "task-14"
-      ],
-      [
-        "task-8",
-        "task-14"
-      ],
-      [
-        "task-12",
-        "task-14"
-      ],
-      [
-        "task-13",
-        "task-14"
       ]
     ]
   },
@@ -403,172 +323,10 @@
       "agent_id": "agent-task-1",
       "task_id": "task-1",
       "status": "done",
-      "tokens_used": 5225,
-      "started_at_epoch": 1774087548.144311,
+      "tokens_used": 9883,
+      "started_at_epoch": 1774105095.9321659,
       "model": "",
-      "task_title": "Fix mutable closure capture persistence in MIR builder",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-4",
-      "task_id": "task-4",
-      "status": "done",
-      "tokens_used": 1313,
-      "started_at_epoch": 1774087548.149915,
-      "model": "",
-      "task_title": "Add gfx_delta_time builtin function",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-5",
-      "task_id": "task-5",
-      "status": "done",
-      "tokens_used": 2841,
-      "started_at_epoch": 1774087548.155422,
-      "model": "",
-      "task_title": "Create graphics_image.go with ImageStore and PNG loading",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-2",
-      "task_id": "task-2",
-      "status": "done",
-      "tokens_used": 5835,
-      "started_at_epoch": 1774087663.987536,
-      "model": "",
-      "task_title": "Add MIR unit tests for UpvalueAlias propagation",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-3",
-      "task_id": "task-3",
-      "status": "done",
-      "tokens_used": 17493,
-      "started_at_epoch": 1774087663.993993,
-      "model": "",
-      "task_title": "Create E2E test for mutable closure captures",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-6",
-      "task_id": "task-6",
-      "status": "done",
-      "tokens_used": 2921,
-      "started_at_epoch": 1774087663.999562,
-      "model": "",
-      "task_title": "Add draw image commands to graphics_image.go",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-7",
-      "task_id": "task-7",
-      "status": "done",
-      "tokens_used": 6084,
-      "started_at_epoch": 1774088258.262229,
-      "model": "",
-      "task_title": "Register all new builtins in core.go and codegen.go",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-8",
-      "task_id": "task-8",
-      "status": "done",
-      "tokens_used": 3656,
-      "started_at_epoch": 1774088409.4481401,
-      "model": "",
-      "task_title": "Add image builtin tests",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-9",
-      "task_id": "task-9",
-      "status": "done",
-      "tokens_used": 2041,
-      "started_at_epoch": 1774088409.454608,
-      "model": "",
-      "task_title": "Update raycaster with delta-time movement",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-13",
-      "task_id": "task-13",
-      "status": "done",
-      "tokens_used": 3234,
-      "started_at_epoch": 1774088409.460163,
-      "model": "",
-      "task_title": "Create image_viewer.ryx example with key constants",
+      "task_title": "Create dungeon_crawler.ryx with all pre-main helper functions",
       "activity": "cost_delta",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
@@ -583,10 +341,154 @@
       "agent_id": "agent-task-10",
       "task_id": "task-10",
       "status": "done",
-      "tokens_used": 4907,
-      "started_at_epoch": 1774088505.104717,
+      "tokens_used": 1459,
+      "started_at_epoch": 1774105095.937759,
       "model": "",
-      "task_title": "Add collectible item system to raycaster",
+      "task_title": "Create PNG wall texture assets",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-2",
+      "task_id": "task-2",
+      "status": "done",
+      "tokens_used": 6455,
+      "started_at_epoch": 1774105270.77223,
+      "model": "",
+      "task_title": "Add fn main() with all mutable state declarations",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-3",
+      "task_id": "task-3",
+      "status": "done",
+      "tokens_used": 3667,
+      "started_at_epoch": 1774105373.938932,
+      "model": "",
+      "task_title": "Add initial level load and frame callback skeleton",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-4",
+      "task_id": "task-4",
+      "status": "done",
+      "tokens_used": 4021,
+      "started_at_epoch": 1774105449.395665,
+      "model": "",
+      "task_title": "Implement menu screens (title, game over, victory, pause)",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-5",
+      "task_id": "task-5",
+      "status": "done",
+      "tokens_used": 2652,
+      "started_at_epoch": 1774105525.820794,
+      "model": "",
+      "task_title": "Implement player input and movement",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-6",
+      "task_id": "task-6",
+      "status": "done",
+      "tokens_used": 3802,
+      "started_at_epoch": 1774105587.9987352,
+      "model": "",
+      "task_title": "Implement enemy AI and movement",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-7",
+      "task_id": "task-7",
+      "status": "done",
+      "tokens_used": 4742,
+      "started_at_epoch": 1774105671.4839602,
+      "model": "",
+      "task_title": "Implement combat, contact damage, and item pickup",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-8",
+      "task_id": "task-8",
+      "status": "done",
+      "tokens_used": 7915,
+      "started_at_epoch": 1774105785.0619771,
+      "model": "",
+      "task_title": "Implement particle update and full scene rendering",
+      "activity": "cost_delta",
+      "backend": "",
+      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
+      "exit_code": null,
+      "restart_count": 0,
+      "tool_call_count": 0,
+      "current_tool": "",
+      "files_touched": [],
+      "llm_turns": 0
+    },
+    {
+      "agent_id": "agent-task-9",
+      "task_id": "task-9",
+      "status": "done",
+      "tokens_used": 6465,
+      "started_at_epoch": 1774105957.5438468,
+      "model": "",
+      "task_title": "Implement HUD, minimap, and level completion logic",
       "activity": "cost_delta",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
@@ -601,10 +503,10 @@
       "agent_id": "agent-task-11",
       "task_id": "task-11",
       "status": "done",
-      "tokens_used": 1517,
-      "started_at_epoch": 1774088605.9954581,
+      "tokens_used": 1968,
+      "started_at_epoch": 1774106075.306572,
       "model": "",
-      "task_title": "Add HUD overlay and score display to raycaster",
+      "task_title": "Add compile-only integration test for dungeon_crawler",
       "activity": "cost_delta",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
@@ -619,28 +521,10 @@
       "agent_id": "agent-task-12",
       "task_id": "task-12",
       "status": "done",
-      "tokens_used": 13434,
-      "started_at_epoch": 1774088649.139915,
+      "tokens_used": 11187,
+      "started_at_epoch": 1774106137.9781382,
       "model": "",
-      "task_title": "Add start screen and game-over screen to raycaster",
-      "activity": "cost_delta",
-      "backend": "",
-      "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
-      "exit_code": null,
-      "restart_count": 0,
-      "tool_call_count": 0,
-      "current_tool": "",
-      "files_touched": [],
-      "llm_turns": 0
-    },
-    {
-      "agent_id": "agent-task-14",
-      "task_id": "task-14",
-      "status": "done",
-      "tokens_used": 8345,
-      "started_at_epoch": 1774088854.104075,
-      "model": "",
-      "task_title": "Integration tests and codegen verification",
+      "task_title": "Verify complete build and test suite",
       "activity": "cost_delta",
       "backend": "",
       "cwd": "/Users/eren/Documents/AI/attocodepy_swarmtester_11",
@@ -653,31 +537,31 @@
     }
   ],
   "budget": {
-    "tokens_used": 78846,
+    "tokens_used": 64216,
     "tokens_max": 5000000,
     "cost_used_usd": 0.0,
     "cost_max_usd": 50.0
   },
   "dag_summary": {
-    "done": 14
+    "done": 12
   },
-  "elapsed_s": 1704.6755330562592,
-  "state_seq": 19,
+  "elapsed_s": 1861.2753491401672,
+  "state_seq": 25,
   "merge_queue": {},
   "attempts": {},
   "decisions": [
     {
-      "timestamp": "2026-03-21T10:05:47.946423+00:00",
+      "timestamp": "2026-03-21T14:58:15.771005+00:00",
       "phase": "decomposing",
       "decision_type": "decomposition_complete",
-      "decision": "Produced 14 tasks",
+      "decision": "Produced 12 tasks",
       "reasoning": "Goal complexity drove task count"
     }
   ],
   "errors": [],
   "task_transition_log": [
     {
-      "timestamp": "2026-03-21T10:07:43.653124+00:00",
+      "timestamp": "2026-03-21T15:01:10.570772+00:00",
       "task_id": "task-1",
       "from_state": "running",
       "to_state": "done",
@@ -685,79 +569,7 @@
       "assigned_agent": "agent-task-1"
     },
     {
-      "timestamp": "2026-03-21T10:07:43.653572+00:00",
-      "task_id": "task-4",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-4"
-    },
-    {
-      "timestamp": "2026-03-21T10:07:43.653696+00:00",
-      "task_id": "task-5",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-5"
-    },
-    {
-      "timestamp": "2026-03-21T10:17:38.048272+00:00",
-      "task_id": "task-2",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-2"
-    },
-    {
-      "timestamp": "2026-03-21T10:17:38.048607+00:00",
-      "task_id": "task-3",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-3"
-    },
-    {
-      "timestamp": "2026-03-21T10:17:38.048728+00:00",
-      "task_id": "task-6",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-6"
-    },
-    {
-      "timestamp": "2026-03-21T10:20:09.149875+00:00",
-      "task_id": "task-7",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-7"
-    },
-    {
-      "timestamp": "2026-03-21T10:21:44.778909+00:00",
-      "task_id": "task-8",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-8"
-    },
-    {
-      "timestamp": "2026-03-21T10:21:44.779122+00:00",
-      "task_id": "task-9",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-9"
-    },
-    {
-      "timestamp": "2026-03-21T10:21:44.779200+00:00",
-      "task_id": "task-13",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-13"
-    },
-    {
-      "timestamp": "2026-03-21T10:23:25.742768+00:00",
+      "timestamp": "2026-03-21T15:01:10.571280+00:00",
       "task_id": "task-10",
       "from_state": "running",
       "to_state": "done",
@@ -765,7 +577,71 @@
       "assigned_agent": "agent-task-10"
     },
     {
-      "timestamp": "2026-03-21T10:24:08.945282+00:00",
+      "timestamp": "2026-03-21T15:02:53.572353+00:00",
+      "task_id": "task-2",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-2"
+    },
+    {
+      "timestamp": "2026-03-21T15:04:09.188335+00:00",
+      "task_id": "task-3",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-3"
+    },
+    {
+      "timestamp": "2026-03-21T15:05:25.540317+00:00",
+      "task_id": "task-4",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-4"
+    },
+    {
+      "timestamp": "2026-03-21T15:06:27.734270+00:00",
+      "task_id": "task-5",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-5"
+    },
+    {
+      "timestamp": "2026-03-21T15:07:51.269896+00:00",
+      "task_id": "task-6",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-6"
+    },
+    {
+      "timestamp": "2026-03-21T15:09:44.754800+00:00",
+      "task_id": "task-7",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-7"
+    },
+    {
+      "timestamp": "2026-03-21T15:12:37.233963+00:00",
+      "task_id": "task-8",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-8"
+    },
+    {
+      "timestamp": "2026-03-21T15:14:35.101338+00:00",
+      "task_id": "task-9",
+      "from_state": "running",
+      "to_state": "done",
+      "reason": "completed successfully",
+      "assigned_agent": "agent-task-9"
+    },
+    {
+      "timestamp": "2026-03-21T15:15:37.646633+00:00",
       "task_id": "task-11",
       "from_state": "running",
       "to_state": "done",
@@ -773,37 +649,29 @@
       "assigned_agent": "agent-task-11"
     },
     {
-      "timestamp": "2026-03-21T10:27:33.851850+00:00",
+      "timestamp": "2026-03-21T15:25:51.649887+00:00",
       "task_id": "task-12",
       "from_state": "running",
       "to_state": "done",
       "reason": "completed successfully",
       "assigned_agent": "agent-task-12"
-    },
-    {
-      "timestamp": "2026-03-21T10:30:49.570019+00:00",
-      "task_id": "task-14",
-      "from_state": "running",
-      "to_state": "done",
-      "reason": "completed successfully",
-      "assigned_agent": "agent-task-14"
     }
   ],
-  "git_branch": "attoswarm/9125a3cd",
+  "git_branch": "attoswarm/24d6d50c",
   "timing": {
     "summary": {
-      "decompose_goal": 151.049,
-      "execute_batch": 1499.549,
-      "process_batch_results": 0.007,
-      "ast_refresh": 1.774
+      "decompose_goal": 147.448,
+      "execute_batch": 1653.022,
+      "process_batch_results": 0.012,
+      "ast_refresh": 2.551
     },
-    "wall_clock_s": 1652.674,
-    "entry_count": 24
+    "wall_clock_s": 1803.328,
+    "entry_count": 33
   },
   "health_monitor": {},
   "cache_stats": {
     "hits": 0,
-    "misses": 23,
+    "misses": 24,
     "evictions": 0,
     "hit_rate": 0.0
   },

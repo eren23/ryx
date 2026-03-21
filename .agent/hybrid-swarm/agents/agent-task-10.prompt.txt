@@ -1,18 +1,8 @@
-# Task: Add collectible item system to raycaster
+# Task: Create PNG wall texture assets
 
-Add collectible items to `examples/raycaster.ryx`.
+Create the directory `examples/assets/` and generate two minimal 32x32 PNG texture files: (1) `examples/assets/wall_stone.png`: 32x32 pixels with a gray brick pattern using alternating horizontal bands of colors #787878 and #646464. (2) `examples/assets/wall_moss.png`: 32x32 pixels with a green-gray pattern using alternating bands of #5A6E50 and #4A5E40. These can be generated using Go's image package in a small helper script, or any other method. The game gracefully falls back to solid-color rectangles if these files don't load (gfx_load_image returns -1), so simple placeholder images are fine.
 
-Changes:
-1. Add `let mut items = [...]` array matching the 16x16 world map. Place 1 values at 6-8 open floor positions (where world_map has 0). Initialize all other positions to 0.
-2. Add `let mut score = 0` and `let mut total_items = <count>` as mutable captured variables.
-3. In the frame callback, after movement logic: check `items[floor(pos_y) * 16 + floor(pos_x)]`. If == 1, set to 0 and increment `score`.
-4. On minimap rendering: add a pass that draws small colored dots (cyan, e.g., `gfx_set_color(gfx_rgb(0, 255, 255))`) for positions where `items[i] == 1`.
-
-Read `examples/raycaster.ryx` for current state, world map layout, and minimap rendering code.
-
-Acceptance: compiles and type-checks. Items are rendered on minimap, walking over them collects them.
-
-Target files: examples/raycaster.ryx
+Target files: examples/assets/wall_stone.png, examples/assets/wall_moss.png
 
 ## Testing
 Verify: go test ./...

@@ -16,6 +16,10 @@ func (vm *VM) InvokeCallback(fn Value, args []Value, heap *Heap) (Value, error) 
 		return UnitVal(), fmt.Errorf("callback invoker: no active fiber")
 	}
 
+	// Save SP so we can restore it after the callback returns,
+	// preventing stack leak across repeated invocations (e.g. game frames).
+	savedSP := f.SP
+
 	for _, a := range args {
 		f.Push(a)
 	}
@@ -70,8 +74,11 @@ func (vm *VM) InvokeCallback(fn Value, args []Value, heap *Heap) (Value, error) 
 		err := vm.execute(f)
 		if err != nil {
 			if errors.Is(err, ErrCallbackReturn) {
-				return f.Pop(), nil
+				result := f.Pop()
+				f.SP = savedSP
+				return result, nil
 			}
+			f.SP = savedSP
 			return UnitVal(), err
 		}
 		if f.State != FiberRunning {

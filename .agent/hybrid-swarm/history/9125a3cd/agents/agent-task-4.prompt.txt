@@ -1,0 +1,23 @@
+# Task: Add gfx_delta_time builtin function
+
+Add `gfx_delta_time()` builtin to `pkg/stdlib/graphics_bridge.go`.
+
+Implementation:
+- Create function `GfxDeltaTime(args []vm.Value, heap *vm.Heap) vm.Value`
+- Returns `vm.FloatVal(1.0 / ebiten.ActualTPS())`
+- Guard against division by zero: if `ebiten.ActualTPS() <= 0`, return `vm.FloatVal(1.0 / 60.0)` as fallback
+- Follow the same pattern as other bridge builtins in the file (e.g., GfxKeyPressed)
+
+Read `pkg/stdlib/graphics_bridge.go` for existing builtin function patterns.
+
+Note: Registration in core.go and codegen.go will be handled by a separate task.
+
+Acceptance: `go build ./pkg/stdlib/...` compiles.
+
+Target files: pkg/stdlib/graphics_bridge.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

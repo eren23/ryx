@@ -263,6 +263,21 @@ func (b *builder) tryRemoveTrivialPhi(phi *Phi, block BlockID) Value {
 		}
 	}
 
+	// Replace all references to the removed phi's dest in other phis' args.
+	// Without this, other phis may hold stale references to the dead local,
+	// causing incorrect values at runtime (Braun et al. SSA construction
+	// requires propagating trivial phi removal to all users).
+	removedID := phi.Dest
+	for _, bb := range b.fn.Blocks {
+		for _, p := range bb.Phis {
+			for predID, arg := range p.Args {
+				if local, ok := arg.(*Local); ok && local.ID == removedID {
+					p.Args[predID] = same
+				}
+			}
+		}
+	}
+
 	return same
 }
 

@@ -1,27 +1,8 @@
-# Task: Register all new builtins in core.go and codegen.go
+# Task: Implement combat, contact damage, and item pickup
 
-Register all new builtins from tasks 4-6 in the central registration and codegen files.
+Add three gameplay systems after enemy AI in STATE_PLAYING. (1) Player Attack (T12): on SPACE just-pressed and cooldown expired, set cooldown, spawn 6 white attack particles using attack_vx/vy in facing direction, damage all enemies within PLAYER_ATTACK_RANGE() for random 20-35 damage, kill enemies at hp<=0 (set alive=0, add score=10*type, spawn 12 death particles in enemy color using burst_vx/vy). (2) Contact Damage (T13): if player_invuln_timer<=0, check each alive enemy distance < 0.7, deal enemy_damage(), set flash=0.3 and invuln=0.5, spawn 4 red particles, check death (hp<=0 -> STATE_GAME_OVER). (3) Item Pickup (T14): check player tile vs each active item tile, collect matching items (health: +30 hp capped at 100, gem: +50 score), spawn 8 spiral particles in item color. Particle slot finding: linear scan for part_active[slot]==0. Reference exact code from goal sections T12, T13, T14.
 
-Modify `pkg/stdlib/core.go`:
-- In `RegisterGraphics()` (or equivalent registration function), add call to `RegisterImageBuiltins(r)`
-- Ensure `GfxDeltaTime` is registered as `gfx_delta_time` builtin (either in `RegisterBridgeBuiltins` or wherever bridge builtins are registered)
-
-Modify `pkg/codegen/codegen.go`:
-- Add ALL new builtin names to `callBuiltinNames` (or equivalent map/slice):
-  - `"gfx_delta_time"`
-  - `"gfx_load_image"`
-  - `"gfx_draw_image"`
-  - `"gfx_draw_image_scaled"`
-  - `"gfx_image_width"`
-  - `"gfx_image_height"`
-
-Read for context:
-- `pkg/stdlib/core.go` (existing registration patterns, RegisterGraphics, RegisterBridgeBuiltins)
-- `pkg/codegen/codegen.go` (callBuiltinNames location and format)
-
-Acceptance: `go build ./...` compiles with all new builtins registered.
-
-Target files: pkg/stdlib/core.go, pkg/codegen/codegen.go
+Target files: examples/dungeon_crawler.ryx
 
 ## Testing
 Verify: go test ./...

@@ -1,19 +1,8 @@
-# Task: Update raycaster with delta-time movement
+# Task: Implement HUD, minimap, and level completion logic
 
-Update `examples/raycaster.ryx` to use delta-time-based movement instead of fixed per-frame speeds.
+Add after rendering in STATE_PLAYING: (1) HUD (T17): semi-transparent black bar (30px tall), health bar with green/yellow/red fill based on hp%, HP text, level number, score in gold, enemy alive count, FPS display, attack cooldown indicator bar. (2) Minimap (T17): positioned at top-right (556,34), 4x4 pixels per tile, semi-transparent background, render walls as gray, water as blue, exit as green, items as cyan 2x2 dots, enemies as red 3x3 dots, player as white 3x3 dot. (3) Level Completion Check (T8 end-of-playing): count alive enemies, check boss death on level 3 (unlock exit, reveal exit tile at 9,7), check player on exit tile -> set total_score, timer=2.0, STATE_LEVEL_COMPLETE. (4) STATE_LEVEL_COMPLETE branch (T8): show transition screen, countdown timer, when expired increment level, reload all arrays for next level (same pattern as Section 7), or STATE_VICTORY if level>3. Reference exact code from goal sections T17 and T8.
 
-Changes:
-1. Replace `let move_speed = 0.12` and `let rot_speed = 0.03` with base speeds: `let base_move = 4.0` and `let base_rot = 2.0` (units per second).
-2. At the start of the frame callback, add: `let dt = gfx_delta_time()`
-3. Add guard: `let dt = if dt <= 0.0 { 1.0 / 60.0 } else { dt }` (or equivalent)
-4. Compute per-frame speeds: `let move_speed = base_move * dt` and `let rot_speed = base_rot * dt`
-5. Rest of movement code remains the same (it already uses move_speed/rot_speed)
-
-Read `examples/raycaster.ryx` for current state and variable names.
-
-Acceptance: `go build ./cmd/ryx/ && ./ryx check examples/raycaster.ryx` passes (type-check).
-
-Target files: examples/raycaster.ryx
+Target files: examples/dungeon_crawler.ryx
 
 ## Testing
 Verify: go test ./...

@@ -1,2 +1,1 @@
-All 13 tests pass, including the 3 new UpvalueAlias tests.
-
+All tests pass. The edit replaced the placeholder `fn main()

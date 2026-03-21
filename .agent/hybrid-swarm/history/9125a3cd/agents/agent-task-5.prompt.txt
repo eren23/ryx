@@ -1,0 +1,29 @@
+# Task: Create graphics_image.go with ImageStore and PNG loading
+
+Create `pkg/stdlib/graphics_image.go` with the ImageStore and PNG loading/query builtins.
+
+Implementation:
+1. `ImageStore` struct with `images []*ebiten.Image` and `sync.Mutex`
+2. Global `var imageStore = &ImageStore{}`
+3. `GfxLoadImage(args []vm.Value, heap *vm.Heap) vm.Value`: takes String path arg, opens file, decodes PNG via `image/png`, converts via `ebiten.NewImageFromImage()`, appends to `imageStore.images`, returns `vm.IntVal(handleID)`. Returns `vm.IntVal(-1)` on error.
+4. `GfxImageWidth(args []vm.Value, heap *vm.Heap) vm.Value`: given Int handle, returns image width as IntVal
+5. `GfxImageHeight(args []vm.Value, heap *vm.Heap) vm.Value`: given Int handle, returns image height as IntVal
+6. `RegisterImageBuiltins(r *vm.BuiltinRegistry)` function that registers `gfx_load_image`, `gfx_image_width`, `gfx_image_height`
+
+Follow the same patterns as `pkg/stdlib/graphics_bridge.go` (GraphicsState) and `pkg/stdlib/graphics_draw.go` (builtin function signatures).
+
+Read for context:
+- `pkg/stdlib/graphics_bridge.go` (GraphicsState pattern, mutex usage)
+- `pkg/stdlib/graphics_draw.go` (builtin function patterns)
+- `pkg/stdlib/core.go` (registration pattern)
+- `pkg/vm/value.go` (Value types: IntVal, FloatVal, StringVal)
+
+Acceptance: `go build ./pkg/stdlib/...` compiles.
+
+Target files: pkg/stdlib/graphics_image.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

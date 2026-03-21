@@ -77,6 +77,11 @@ func Check(program *parser.Program, resolved *resolver.ResolveResult, registry *
 	// Push global scope.
 	c.pushEnv()
 
+	// Register builtin function type signatures so the type checker
+	// can infer correct return types for expressions like
+	// int_to_float(x) / int_to_float(y) → Float (not unresolved).
+	c.registerBuiltinTypes()
+
 	// Register local types and traits for orphan rule.
 	for name := range resolved.StructDefs {
 		traits.LocalTypes[name] = true
@@ -149,6 +154,79 @@ func (c *Checker) currentEnvFreeVars() map[int]bool {
 		}
 	}
 	return EnvFreeVars(combined)
+}
+
+// ---------------------------------------------------------------------------
+// Builtin function type signatures
+// ---------------------------------------------------------------------------
+
+// registerBuiltinTypes adds type signatures for all builtin functions to the
+// global scope. This ensures the type checker can infer correct return types
+// for builtin calls, which is critical for downstream codegen (e.g., choosing
+// OpDivFloat vs OpDivInt when the result of int_to_float is used in division).
+// User-defined functions with the same names will shadow these in registerTopLevel.
+func (c *Checker) registerBuiltinTypes() {
+	// Only register builtins with concrete, non-polymorphic signatures where
+	// the return type matters for downstream type inference (e.g., arithmetic).
+	// Skip polymorphic builtins (print, min, max, abs, clamp, etc.) — they
+	// stay as fresh type vars so they work with any argument type.
+	builtins := map[string]*FnType{
+		// Type conversions — critical for arithmetic type inference
+		"int_to_float":    {Params: []Type{TypInt}, Return: TypFloat},
+		"float_to_int":    {Params: []Type{TypFloat}, Return: TypInt},
+		"int_to_string":   {Params: []Type{TypInt}, Return: TypString},
+		"float_to_string": {Params: []Type{TypFloat}, Return: TypString},
+		"parse_int":       {Params: []Type{TypString}, Return: TypInt},
+		"parse_float":     {Params: []Type{TypString}, Return: TypFloat},
+		"string_to_int":   {Params: []Type{TypString}, Return: TypInt},
+		"string_to_float": {Params: []Type{TypString}, Return: TypFloat},
+		"char_to_int":     {Params: []Type{TypChar}, Return: TypInt},
+
+		// String operations — return type matters
+		"string_len": {Params: []Type{TypString}, Return: TypInt},
+
+		// Math (Float -> Float) — return type critical for arithmetic
+		"sqrt":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"floor": {Params: []Type{TypFloat}, Return: TypFloat},
+		"ceil":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"round": {Params: []Type{TypFloat}, Return: TypFloat},
+		"sin":   {Params: []Type{TypFloat}, Return: TypFloat},
+		"cos":   {Params: []Type{TypFloat}, Return: TypFloat},
+		"tan":   {Params: []Type{TypFloat}, Return: TypFloat},
+		"asin":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"acos":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"atan":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"atan2": {Params: []Type{TypFloat, TypFloat}, Return: TypFloat},
+		"log":   {Params: []Type{TypFloat}, Return: TypFloat},
+		"log2":  {Params: []Type{TypFloat}, Return: TypFloat},
+		"log10": {Params: []Type{TypFloat}, Return: TypFloat},
+		"exp":   {Params: []Type{TypFloat}, Return: TypFloat},
+		"pow":   {Params: []Type{TypFloat, TypFloat}, Return: TypFloat},
+		"pi":    {Params: []Type{}, Return: TypFloat},
+		"e":     {Params: []Type{}, Return: TypFloat},
+		"random_float": {Params: []Type{}, Return: TypFloat},
+		"random_int":   {Params: []Type{TypInt, TypInt}, Return: TypInt},
+
+		// Time
+		"time_now_ms": {Params: []Type{}, Return: TypInt},
+
+		// Graphics — return types used in expressions
+		"gfx_rgb":          {Params: []Type{TypInt, TypInt, TypInt}, Return: TypInt},
+		"gfx_rgba":         {Params: []Type{TypInt, TypInt, TypInt, TypInt}, Return: TypInt},
+		"gfx_load_image":   {Params: []Type{TypString}, Return: TypInt},
+		"gfx_image_width":  {Params: []Type{TypInt}, Return: TypInt},
+		"gfx_image_height": {Params: []Type{TypInt}, Return: TypInt},
+		"gfx_width":        {Params: []Type{}, Return: TypInt},
+		"gfx_height":       {Params: []Type{}, Return: TypInt},
+		"gfx_fps":          {Params: []Type{}, Return: TypFloat},
+		"gfx_delta_time":   {Params: []Type{}, Return: TypFloat},
+		"gfx_mouse_x":      {Params: []Type{}, Return: TypInt},
+		"gfx_mouse_y":      {Params: []Type{}, Return: TypInt},
+	}
+
+	for name, fnType := range builtins {
+		c.defineVar(name, MonoScheme(fnType))
+	}
 }
 
 // ---------------------------------------------------------------------------

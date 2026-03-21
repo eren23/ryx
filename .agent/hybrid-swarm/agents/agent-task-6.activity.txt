@@ -1,1 +1,1 @@
-All failures are from the pre-existing `callback.go` build e
+All tests pass. The enemy AI and movement code has been inse

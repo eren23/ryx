@@ -1,21 +1,14 @@
-# Task: Add HUD overlay and score display to raycaster
+# Task: Add compile-only integration test for dungeon_crawler
 
-Add a HUD overlay to `examples/raycaster.ryx`.
+Modify `tests/integration/e2e_test.go` to add a `TestDungeonCrawlerCompiles` function. Read the existing test file first to understand the test patterns and available helper functions (like compileAndRun). The test should: read `../../examples/dungeon_crawler.ryx` with os.ReadFile, skip if not found, call the compile helper, and verify no compilation errors occur. Since the program calls gfx_init/gfx_run which requires a display, runtime errors related to graphics/display/ebiten should be tolerated — only fail on actual compile errors. Make sure to add any needed imports (e.g., `strings` for strings.Contains). Reference the exact test code from goal section T18.
 
-Changes:
-1. Draw semi-transparent HUD bar at top of screen: `gfx_set_color(gfx_rgba(0, 0, 0, 160))`, `gfx_fill_rect(0, 0, screen_w, 30)`.
-2. Display score text: `gfx_set_color(gfx_rgb(255, 255, 255))`, `gfx_text(10, 8, "Score: " ++ int_to_string(score))`.
-3. Display items remaining: compute remaining count from items array, show `"Items: " ++ int_to_string(remaining) ++ "/" ++ int_to_string(total_items)`.
-4. Move existing FPS display into the HUD bar area (right-aligned).
+Target files: tests/integration/e2e_test.go
 
-Read `examples/raycaster.ryx` for current rendering order, FPS display location, and available text/drawing functions.
+## Related Tests
+These test files cover your target files — run them to verify:
+- tests/integration/e2e_test.go
 
-Acceptance: HUD renders at top with score, items, and FPS.
-
-Target files: examples/raycaster.ryx
-
-## Testing
-Verify: go test ./...
+Verify: go test ./... tests/integration/e2e_test.go
 
 ## Context from Previous Runs
 No relevant learnings found for this project.

@@ -1,1 +1,7 @@
-All tests pass. Here's a summary of the changes to `examples
+
+
+## Verification Results
+
+### 4 Core Checks
+
+| Check | Resu

@@ -1,23 +1,8 @@
-# Task: Create E2E test for mutable closure captures
+# Task: Add initial level load and frame callback skeleton
 
-Create end-to-end test files that verify mutable closure captures persist across invocations.
+Append to `examples/dungeon_crawler.ryx` Section 7 (initial level load) and Section 8 (frame callback skeleton). Section 7: copy level 1 tile data into tiles array using while loop, populate enemy arrays from get_level_enemies() with +0.5 offset for centering, populate item arrays from get_level_items(), set player start position, initialize boss state, clear particles. Section 8: define `let frame = || { ... };` closure with delta-time computation (default to 1/60 if <= 0), global ESC handling (toggle playing/paused, quit from other states), and state dispatch if/else chain covering all 6 states (STATE_TITLE, STATE_PLAYING, STATE_GAME_OVER, STATE_LEVEL_COMPLETE, STATE_VICTORY, STATE_PAUSED) with `()` placeholder expressions. Close with `gfx_run(frame)` and `}` for main. Reference exact code from goal sections T6 and T7. The placeholder expressions will be replaced by subsequent tasks.
 
-Create `tests/testdata/programs/closure_mut_capture.ryx`:
-- A program that creates a closure capturing `let mut x = 0`
-- The closure increments `x` inside an `if true { x = x + 1 }` block
-- The closure is called 3 times (via a loop or repeated invocation)
-- Each call prints the current value of `x`
-- Use patterns consistent with existing test programs in `tests/testdata/programs/`
-
-Create `tests/testdata/programs/closure_mut_capture.expected`:
-- Expected output: `1\n2\n3\n`
-
-Read existing test programs in `tests/testdata/programs/` for syntax patterns and conventions.
-Read `tests/integration/e2e_test.go` to understand how test programs are discovered and run.
-
-Acceptance: `go test ./tests/integration/ -run E2E -v` passes including the new test case.
-
-Target files: tests/testdata/programs/closure_mut_capture.ryx, tests/testdata/programs/closure_mut_capture.expected
+Target files: examples/dungeon_crawler.ryx
 
 ## Testing
 Verify: go test ./...

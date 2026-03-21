@@ -1155,6 +1155,19 @@ func walkExprForCaptures(expr Expr, locals map[string]bool, globals map[string]b
 		if e.Value != nil {
 			walkExprForCaptures(e.Value, locals, globals, seen, captures)
 		}
+	case *Assign:
+		if !locals[e.Name] && !globals[e.Name] && !seen[e.Name] {
+			seen[e.Name] = true
+			*captures = append(*captures, Capture{Name: e.Name, Type: e.Value.ExprType()})
+		}
+		walkExprForCaptures(e.Value, locals, globals, seen, captures)
+	case *FieldAssign:
+		walkExprForCaptures(e.Object, locals, globals, seen, captures)
+		walkExprForCaptures(e.Value, locals, globals, seen, captures)
+	case *IndexAssign:
+		walkExprForCaptures(e.Object, locals, globals, seen, captures)
+		walkExprForCaptures(e.Index, locals, globals, seen, captures)
+		walkExprForCaptures(e.Value, locals, globals, seen, captures)
 	case *Cast:
 		walkExprForCaptures(e.Expr, locals, globals, seen, captures)
 	case *Spawn:

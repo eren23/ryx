@@ -1,21 +1,6 @@
-# Task: Add start screen and game-over screen to raycaster
+# Task: Verify complete build and test suite
 
-Add game state management with start and win screens to `examples/raycaster.ryx`.
-
-Changes:
-1. Add `let mut game_state = 0` (0 = start, 1 = playing, 2 = win) as a captured mutable variable.
-2. Wrap frame callback body in a branch on `game_state`:
-   - State 0 (start): black background, centered title "RYX RAYCASTER" in white, "Press ENTER to start" below. On `gfx_key_just_pressed(KEY_ENTER())`: set `game_state = 1`.
-   - State 1 (playing): existing raycaster + items + HUD logic. When `score == total_items`: set `game_state = 2`.
-   - State 2 (win): "ALL ITEMS COLLECTED!" title, "Score: N" display, "Press ENTER to restart". On ENTER: reset `pos_x`, `pos_y`, `dir_x`, `dir_y`, `plane_x`, `plane_y`, `score` to initial values, reset items array, set `game_state = 0`.
-3. Ensure `KEY_ENTER` constant is available (check `graphics_input.go` for existing key constants).
-
-Read `examples/raycaster.ryx` for current state, variable names, and initial values.
-Read `pkg/stdlib/graphics_input.go` for available key constants.
-
-Acceptance: game has three states with transitions. Title screen → gameplay → win screen → restart.
-
-Target files: examples/raycaster.ryx
+Final verification task. Run: (1) `go build ./cmd/ryx` to ensure the compiler builds. (2) `wc -l examples/dungeon_crawler.ryx` to verify the file is approximately 1400-1600 lines. (3) `go test ./tests/integration/ -run DungeonCrawler -v` to verify the new test passes. (4) `go test ./... -short` to verify all existing tests still pass. Check that: the .ryx file has all 18 sections from T1-T17 present, array sizes are correct (tiles=300, enemies=32, particles=64, items=16), all level tile arrays have exactly 300 elements, variable names are consistent throughout the file, and the file structure matches the documented layout (helper functions before main, state inside main, frame callback closure, gfx_run call at end).
 
 ## Testing
 Verify: go test ./...

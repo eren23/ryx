@@ -1,0 +1,26 @@
+# Task: Fix mutable closure capture persistence in MIR builder
+
+Fix Bug #1: mutable closure captures reset after callback return.
+
+Modify `pkg/mir/builder.go`:
+1. In the `hir.Assign` handler (around line 504-509): after creating the new local via `b.fn.NewLocal(e.Name, ...)`, look up the current definition of the variable via `b.readVariable(e.Name, b.curBlock)`. If it resolves to a `*Local` whose `UpvalueAlias >= 0`, propagate that alias to the newly created local: `b.fn.Locals[int(local)].UpvalueAlias = alias`.
+2. In `readVariableRecursive` (around line 164-214): when creating a phi dest local for multiple predecessors, check if all non-trivial phi operands resolve to locals with the same `UpvalueAlias >= 0`. If so, propagate that alias to the phi dest local.
+
+Read these files for context before making changes:
+- `pkg/mir/builder.go` (full file, especially hir.Assign handler, readVariableRecursive, buildLambdaFunction)
+- `pkg/mir/mir.go` (LocalDef struct, NewLocal method showing UpvalueAlias: -1 default)
+- `pkg/codegen/codegen.go` (emitStoreLocal/emitLoadLocal to understand how UpvalueAlias dispatches)
+- `pkg/vm/value.go` (UpvalueCell)
+- `pkg/vm/callback.go` (InvokeCallback)
+
+Key constraint: only propagate alias when the current def already has one (alias >= 0). Non-closure locals have alias -1 and must be untouched.
+
+Acceptance: `go build ./...` compiles, `go test ./pkg/mir/...` passes.
+
+Target files: pkg/mir/builder.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

@@ -1,25 +1,11 @@
-# Task: Add image builtin tests
+# Task: Implement particle update and full scene rendering
 
-Add tests in `pkg/stdlib/graphics_test.go` for the image subsystem.
+Add after item pickup in STATE_PLAYING: (1) Particle Update (T15): loop all 64 slots, decrement life by dt, deactivate when <=0, else update position by velocity*dt and apply 0.96 friction. (2) Full Rendering (T16): Draw tiles in nested while loops (20x15), floor with checkerboard via floor_color(), walls with texture if wall_img>=0 else solid color, door with frame outline, exit with diagonal staircase lines, water with wave lines. Draw items with type-specific visuals (health=red square+white cross, gem=diamond lines+center fill, key=gold square). Draw enemies as colored rects centered at float position with dark outline and HP bars when damaged (color_lerp red->green). Draw particles as 3x3 faded rects (alpha = life*400 clamped to 255). Draw player as 24x24 blue rect with damage flash alternation and white facing indicator line. Draw order: tiles, items, enemies, particles, player. Reference exact code from goal sections T15 and T16.
 
-Tests to add:
-1. `TestGraphics_ImageStore`: Create a small `image.RGBA` programmatically (e.g., 4x4 colored pixels), convert to `*ebiten.Image` via `ebiten.NewImageFromImage`, manually add to imageStore, verify handle is valid and dimensions are correct via width/height functions.
-2. `TestGraphics_DrawImageCmd`: Verify `DrawImageCmd` implements the `DrawCommand` interface (compile-time check). Create a DrawImageCmd with known values and verify fields.
-3. `TestGraphics_LoadImageInvalidPath`: Call GfxLoadImage with a non-existent path, verify it returns IntVal(-1) without panicking.
+Target files: examples/dungeon_crawler.ryx
 
-Read for context:
-- `pkg/stdlib/graphics_test.go` (existing test patterns)
-- `pkg/stdlib/graphics_image.go` (the functions and types to test)
-
-Acceptance: `go test ./pkg/stdlib/ -run Image -v` passes.
-
-Target files: pkg/stdlib/graphics_test.go
-
-## Related Tests
-These test files cover your target files — run them to verify:
-- pkg/stdlib/graphics_test.go
-
-Verify: go test ./... pkg/stdlib/graphics_test.go
+## Testing
+Verify: go test ./...
 
 ## Context from Previous Runs
 No relevant learnings found for this project.

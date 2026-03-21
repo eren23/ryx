@@ -1,0 +1,30 @@
+# Task: Register all new builtins in core.go and codegen.go
+
+Register all new builtins from tasks 4-6 in the central registration and codegen files.
+
+Modify `pkg/stdlib/core.go`:
+- In `RegisterGraphics()` (or equivalent registration function), add call to `RegisterImageBuiltins(r)`
+- Ensure `GfxDeltaTime` is registered as `gfx_delta_time` builtin (either in `RegisterBridgeBuiltins` or wherever bridge builtins are registered)
+
+Modify `pkg/codegen/codegen.go`:
+- Add ALL new builtin names to `callBuiltinNames` (or equivalent map/slice):
+  - `"gfx_delta_time"`
+  - `"gfx_load_image"`
+  - `"gfx_draw_image"`
+  - `"gfx_draw_image_scaled"`
+  - `"gfx_image_width"`
+  - `"gfx_image_height"`
+
+Read for context:
+- `pkg/stdlib/core.go` (existing registration patterns, RegisterGraphics, RegisterBridgeBuiltins)
+- `pkg/codegen/codegen.go` (callBuiltinNames location and format)
+
+Acceptance: `go build ./...` compiles with all new builtins registered.
+
+Target files: pkg/stdlib/core.go, pkg/codegen/codegen.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

@@ -1,0 +1,34 @@
+# Task: Create image_viewer.ryx example with key constants
+
+Create `examples/image_viewer.ryx` and add any missing key constants.
+
+Create `examples/image_viewer.ryx`:
+1. Load a PNG: `let img = gfx_load_image("examples/assets/sample.png")`
+2. Get dimensions: `let iw = gfx_image_width(img)`, `let ih = gfx_image_height(img)`
+3. Init window: `gfx_init(800, 600, "Ryx Image Viewer")`
+4. Frame callback:
+   - Clear screen black
+   - Draw image centered: compute `cx = 400 - iw/2`, `cy = 300 - ih/2`
+   - Add zoom support: `let mut zoom = 1.0`, +/- keys adjust zoom (clamp to 0.1-10.0 range)
+   - Use `gfx_draw_image_scaled` when zoom != 1.0, `gfx_draw_image` otherwise
+   - ESC to quit
+5. Add a note/comment that users should place their own PNG at the sample path
+
+Modify `pkg/stdlib/graphics_input.go`:
+- Add `KEY_EQUAL` (for +/=) and `KEY_MINUS` key constants if not already present
+- Follow existing patterns for key constant registration
+
+Also create `examples/assets/` directory (just ensure it exists; actual sample PNG is optional).
+
+Read `pkg/stdlib/graphics_input.go` for existing key constant patterns.
+Read `pkg/codegen/codegen.go` if new key constants need codegen registration.
+
+Acceptance: `go build ./cmd/ryx/` compiles. The example type-checks.
+
+Target files: examples/image_viewer.ryx, pkg/stdlib/graphics_input.go
+
+## Testing
+Verify: go test ./...
+
+## Context from Previous Runs
+No relevant learnings found for this project.

@@ -1,1 +1,3 @@
-Both compile and tests pass. Here's a summary of the changes
+All tests pass. 
+
+`examples/dungeon_crawler.ryx` has been cr

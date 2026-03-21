@@ -273,6 +273,19 @@ func TestE2EClosureMutCapture(t *testing.T) {
 	}
 }
 
+// TestDungeonCrawlerCompiles verifies that examples/dungeon_crawler.ryx
+// compiles without errors. Runtime errors from graphics are tolerated.
+func TestDungeonCrawlerCompiles(t *testing.T) {
+	src, err := os.ReadFile("../../examples/dungeon_crawler.ryx")
+	if err != nil {
+		t.Skipf("dungeon_crawler.ryx not found: %v", err)
+	}
+	_, compileErr := compile(string(src), "dungeon_crawler.ryx")
+	if compileErr != nil {
+		t.Errorf("dungeon_crawler.ryx failed to compile: %v", compileErr)
+	}
+}
+
 // compile runs the Ryx compiler pipeline (without executing) and returns
 // the compiled program or an error.
 func compile(src, filename string) (*codegen.CompiledProgram, error) {

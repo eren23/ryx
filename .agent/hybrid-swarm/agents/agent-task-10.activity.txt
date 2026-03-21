@@ -1,1 +1,3 @@
-All changes look correct. All tests pass. Here's what was ad
+All tests pass. 
+
+The temporary `gen_textures.go` script is 

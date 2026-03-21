@@ -1,0 +1,24 @@
+# Task: Add MIR unit tests for UpvalueAlias propagation
+
+Add unit tests in `pkg/mir/mir_test.go` to verify UpvalueAlias propagation through SSA assignments and phi nodes.
+
+Tests to add:
+1. `TestUpvalueAlias_AssignInsideConditional`: Build a MIR function that simulates a closure capturing a mutable variable, then assigns to it inside an `if` block. Verify the new local created by the assignment has the same UpvalueAlias as the original capture local.
+2. `TestUpvalueAlias_PhiPropagation`: Build a MIR function where a mutable capture is assigned in both branches of an `if`. Verify the phi dest local at the merge point inherits the UpvalueAlias.
+3. `TestUpvalueAlias_NonCaptureUnaffected`: Verify that regular (non-closure) local assignments still get UpvalueAlias = -1.
+
+Read `pkg/mir/mir_test.go` for existing test patterns and helpers.
+Read `pkg/mir/mir.go` for LocalDef struct and builder API.
+
+Acceptance: `go test ./pkg/mir/ -run UpvalueAlias -v` passes.
+
+Target files: pkg/mir/mir_test.go
+
+## Related Tests
+These test files cover your target files — run them to verify:
+- pkg/mir/mir_test.go
+
+Verify: go test ./... pkg/mir/mir_test.go
+
+## Context from Previous Runs
+No relevant learnings found for this project.

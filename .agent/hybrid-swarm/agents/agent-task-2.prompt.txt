@@ -1,24 +1,11 @@
-# Task: Add MIR unit tests for UpvalueAlias propagation
+# Task: Add fn main() with all mutable state declarations
 
-Add unit tests in `pkg/mir/mir_test.go` to verify UpvalueAlias propagation through SSA assignments and phi nodes.
+Append to `examples/dungeon_crawler.ryx` the opening of `fn main()` containing Section 6: all mutable game state variable declarations. This includes: game state machine vars (game_state, current_level, score, total_score, level_transition_timer), player state vars (player_x/y as Float, player_target_x/y as Int, player_moving, player_move_progress, player_start_x/y, player_hp, player_facing, player_attack_timer, player_damage_flash, player_invuln_timer), map tiles array (300 zeros), enemy parallel arrays (enemy_x/y as 32 floats, enemy_type/hp/alive as 32 ints, enemy_dir/timer as 32 floats, enemy_count), particle parallel arrays (part_x/y/vx/vy/life as 64 floats, part_color/part_active as 64 ints), item parallel arrays (item_x/y/type/active as 16 ints, item_count), boss state (boss_spawned_minions, boss_alive, exit_unlocked), wall texture handles (wall_img, wall2_img via gfx_load_image), and gfx_init call. Every variable name here is referenced by all subsequent tasks — names must match exactly. Reference the exact code from goal section T5.
 
-Tests to add:
-1. `TestUpvalueAlias_AssignInsideConditional`: Build a MIR function that simulates a closure capturing a mutable variable, then assigns to it inside an `if` block. Verify the new local created by the assignment has the same UpvalueAlias as the original capture local.
-2. `TestUpvalueAlias_PhiPropagation`: Build a MIR function where a mutable capture is assigned in both branches of an `if`. Verify the phi dest local at the merge point inherits the UpvalueAlias.
-3. `TestUpvalueAlias_NonCaptureUnaffected`: Verify that regular (non-closure) local assignments still get UpvalueAlias = -1.
+Target files: examples/dungeon_crawler.ryx
 
-Read `pkg/mir/mir_test.go` for existing test patterns and helpers.
-Read `pkg/mir/mir.go` for LocalDef struct and builder API.
-
-Acceptance: `go test ./pkg/mir/ -run UpvalueAlias -v` passes.
-
-Target files: pkg/mir/mir_test.go
-
-## Related Tests
-These test files cover your target files — run them to verify:
-- pkg/mir/mir_test.go
-
-Verify: go test ./... pkg/mir/mir_test.go
+## Testing
+Verify: go test ./...
 
 ## Context from Previous Runs
 No relevant learnings found for this project.
